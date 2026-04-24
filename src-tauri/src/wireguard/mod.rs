@@ -175,7 +175,7 @@ impl IpAllocator {
         }
         
         // For 10.128.0.0/16, we have 10.128.0.1 to 10.128.255.254
-        if self.next_octet3 > 255 || (self.next_octet3 == 255 && self.next_octet4 > 254) {
+        if self.next_octet3 == 255 && self.next_octet4 > 254 {
             return Err(WireGuardError::IpAllocationFailed);
         }
         

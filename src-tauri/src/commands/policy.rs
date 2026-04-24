@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::command;
 use tracing::info;
+use validator::Validate;
 
 use crate::get_app_state;
 use zerotrust_mesh_lib::policy::{Policy, PolicyAction, PolicyCondition};
@@ -291,7 +292,7 @@ pub async fn toggle_policy(policy_id: String, enabled: bool) -> Result<(), Strin
 /// Test policy against sample request (B1.6)
 #[command]
 pub async fn test_policy(
-    policy_id: String,
+    _policy_id: String,
     request: EvaluateRequest,
 ) -> Result<EvaluationResponse, String> {
     // Same as evaluate but for testing specific policy

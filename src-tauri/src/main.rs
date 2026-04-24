@@ -2,11 +2,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use anyhow::Result;
-use tracing::{info, error, Level};
+use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod commands;
+pub use zerotrust_mesh_lib::get_app_state;
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
@@ -25,8 +25,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
-            // Initialize application state
+        .setup(|_app| {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(async {
                 match zerotrust_mesh_lib::init_app(None).await {
@@ -87,9 +86,13 @@ fn main() {
             commands::audit::get_audit_logs,
             commands::audit::export_logs,
             
-            // Config commands
+            // Config commands            
             commands::config::get_config,
+            commands::config::get_database_stats,
             commands::config::update_config,
+
+            // Development helpers
+            commands::dev::seed_demo_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ZeroTrust Mesh");

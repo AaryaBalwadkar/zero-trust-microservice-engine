@@ -173,7 +173,6 @@ pub struct KnownGoodBinary {
 /// Service attestation state
 #[derive(Debug, Clone)]
 struct ServiceAttestationState {
-    pub service_id: String,
     pub binary_measurement: Option<BinaryMeasurement>,
     pub known_good_hash: Option<String>,
     pub process_info: Option<ProcessInfo>,
@@ -509,7 +508,6 @@ impl TrustManager {
         let mut state = self.service_states
             .entry(service_id.to_string())
             .or_insert_with(|| ServiceAttestationState {
-                service_id: service_id.to_string(),
                 binary_measurement: None,
                 known_good_hash: None,
                 process_info: None,

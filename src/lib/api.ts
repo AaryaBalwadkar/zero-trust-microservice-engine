@@ -25,6 +25,20 @@ export interface Policy {
 	last_match?: string;
 }
 
+export interface Tunnel {
+	id: string;
+	service_a_id: string;
+	service_b_id: string;
+	interface_name: string;
+	public_key: string;
+	virtual_ip: string;
+	peer_endpoint?: string;
+	status: string;
+	bytes_sent: number;
+	bytes_received: number;
+	last_handshake?: string;
+}
+
 export interface TrustScore {
 	service_id: string;
 	score: number;
@@ -88,8 +102,93 @@ export interface DashboardData {
 	tunnels: {
 		total: number;
 		active: number;
-		bytes_transferred: number;
+	bytes_transferred: number;
 	};
+}
+
+export interface AuditLog {
+	id: number;
+	event_type: string;
+	action: string;
+	subject?: string;
+	details?: string;
+	source_ip?: string;
+	user?: string;
+	success: boolean;
+	created_at: string;
+}
+
+export interface ConfigResponse {
+	general: {
+		autostart: boolean;
+		theme: string;
+		notifications_enabled: boolean;
+		inactivity_lock_minutes: number;
+	};
+	identity: {
+		trust_domain: string;
+		jwt_expiration_seconds: number;
+	};
+	policy: {
+		cache_ttl_seconds: number;
+		default_action: string;
+	};
+	wireguard: {
+		listen_port: number;
+		virtual_subnet: string;
+		keepalive_seconds: number;
+		mtu: number;
+	};
+	ebpf: {
+		enabled: boolean;
+		interface: string;
+		syn_flood_threshold: number;
+		port_scan_threshold: number;
+		http_flood_threshold: number;
+	};
+	attestation: {
+		tpm_enabled: boolean;
+		recalculation_interval_seconds: number;
+		full_access_threshold: number;
+		limited_access_threshold: number;
+		isolation_threshold: number;
+	};
+	storage: {
+		database_path: string;
+		log_retention_days: number;
+		max_alerts: number;
+	};
+	logging: {
+		level: string;
+		file_enabled: boolean;
+		file_path: string;
+		max_file_size_mb: number;
+	};
+}
+
+export interface DatabaseStats {
+	service_count: number;
+	policy_count: number;
+	tunnel_count: number;
+	attack_count_24h: number;
+	unacknowledged_alerts: number;
+	blacklist_count: number;
+}
+
+export interface TpmStatus {
+	available: boolean;
+	version?: string;
+	manufacturer?: string;
+	last_check: string;
+}
+
+export interface DemoDataResponse {
+	services: number;
+	policies: number;
+	tunnels: number;
+	attacks: number;
+	alerts: number;
+	audit_logs: number;
 }
 
 // Identity API
@@ -170,12 +269,7 @@ export const attestation = {
 		measured_at: string;
 	}> => invoke('measure_binary', { path }),
 
-	getTpmStatus: (): Promise<{
-		available: boolean;
-		version?: string;
-		manufacturer?: string;
-		last_check: string;
-	}> => invoke('get_tpm_status'),
+	getTpmStatus: (): Promise<TpmStatus> => invoke('get_tpm_status'),
 };
 
 // Attacks API
@@ -183,7 +277,7 @@ export const attacks = {
 	getStats: (): Promise<{
 		total_24h: number;
 		blocked_24h: number;
-		by_type: Record<string, number>;
+		by_type: Array<[string, number]>;
 		top_attackers: Array<[string, number]>;
 		blacklist_count: number;
 	}> => invoke('get_attack_stats'),
@@ -242,15 +336,7 @@ export const audit = {
 		eventType?: string,
 		limit?: number,
 		offset?: number
-	): Promise<Array<{
-		id: number;
-		event_type: string;
-		action: string;
-		subject?: string;
-		details?: string;
-		success: boolean;
-		created_at: string;
-	}>> => invoke('get_audit_logs', { eventType, limit, offset }),
+	): Promise<AuditLog[]> => invoke('get_audit_logs', { eventType, limit, offset }),
 
 	exportLogs: (startDate?: string, endDate?: string): Promise<string> =>
 		invoke('export_logs', { startDate, endDate }),
@@ -258,9 +344,11 @@ export const audit = {
 
 // Config API
 export const config = {
-	get: (): Promise<any> => invoke('get_config'),
+	get: (): Promise<ConfigResponse> => invoke('get_config'),
 
-	update: (section: string, key: string, value: any): Promise<void> =>
+	getDatabaseStats: (): Promise<DatabaseStats> => invoke('get_database_stats'),
+
+	update: (section: string, key: string, value: unknown): Promise<void> =>
 		invoke('update_config', { request: { section, key, value } }),
 };
 
@@ -270,13 +358,17 @@ export const wireguard = {
 		service_a_id: string;
 		service_b_id: string;
 		endpoint?: string;
-	}): Promise<any> => invoke('create_tunnel', { request }),
+	}): Promise<Tunnel> => invoke('create_tunnel', { request }),
 
 	destroyTunnel: (tunnelId: string): Promise<void> =>
 		invoke('destroy_tunnel', { tunnelId }),
 
-	listTunnels: (): Promise<any[]> => invoke('list_tunnels'),
+	listTunnels: (): Promise<Tunnel[]> => invoke('list_tunnels'),
 
-	getTunnelStatus: (tunnelId: string): Promise<any> =>
+	getTunnelStatus: (tunnelId: string): Promise<Tunnel> =>
 		invoke('get_tunnel_status', { tunnelId }),
+};
+
+export const dev = {
+	seedDemoData: (): Promise<DemoDataResponse> => invoke('seed_demo_data'),
 };

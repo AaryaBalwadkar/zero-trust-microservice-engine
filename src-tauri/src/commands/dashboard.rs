@@ -1,6 +1,6 @@
 //! Dashboard data Tauri commands
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::command;
 
 use crate::get_app_state;

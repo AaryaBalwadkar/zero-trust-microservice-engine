@@ -1,0 +1,13 @@
+# Rust build artifacts
+target/
+
+# Node dependencies
+node_modules/
+
+# SvelteKit/Vite artifacts
+.svelte-kit/
+dist/
+
+# OS specific files
+.DS_Store
+Thumbs.db

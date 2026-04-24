@@ -1,6 +1,6 @@
 //! Alert management Tauri commands
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::command;
 use tracing::info;
 
@@ -76,7 +76,7 @@ pub async fn acknowledge_alert(alert_id: i64) -> Result<(), String> {
     
     state.db.execute(
         "UPDATE alerts SET acknowledged = 1, acknowledged_at = ?1 WHERE id = ?2",
-        &[&chrono::Utc::now().to_rfc3339(), &alert_id],
+        &[&chrono::Utc::now().to_rfc3339(), &alert_id.to_string()],
     ).map_err(|e| e.to_string())?;
     
     info!("Acknowledged alert: {}", alert_id);

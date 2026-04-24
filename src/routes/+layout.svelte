@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { currentSection, type NavigationSection } from '$lib/navigation';
 	import { 
 		Shield, 
 		Network, 
@@ -11,10 +11,8 @@
 		Server,
 		Lock
 	} from 'lucide-svelte';
-	
-	let currentPage = 'dashboard';
-	
-	const navItems = [
+
+	const navItems: Array<{ id: NavigationSection; label: string; icon: typeof Activity }> = [
 		{ id: 'dashboard', label: 'Dashboard', icon: Activity },
 		{ id: 'services', label: 'Services', icon: Server },
 		{ id: 'policies', label: 'Policies', icon: Lock },
@@ -45,8 +43,8 @@
 				{#each navItems as item}
 					<li>
 						<button
-							on:click={() => currentPage = item.id}
-							class="w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors {currentPage === item.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
+							on:click={() => currentSection.set(item.id)}
+							class="w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors {$currentSection === item.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
 						>
 							<svelte:component this={item.icon} class="w-5 h-5" />
 							<span>{item.label}</span>
@@ -60,7 +58,7 @@
 		<div class="p-4 border-t border-slate-700">
 			<div class="flex items-center gap-2">
 				<div class="w-2 h-2 rounded-full bg-green-500"></div>
-				<span class="text-sm text-slate-400">System Healthy</span>
+				<span class="text-sm text-slate-400">Desktop Dev Mode</span>
 			</div>
 		</div>
 	</aside>

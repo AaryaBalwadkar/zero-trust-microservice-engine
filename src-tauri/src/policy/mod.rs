@@ -293,7 +293,7 @@ pub struct PolicyEngine {
 impl PolicyEngine {
     /// Create a new policy engine
     pub fn new(db: Arc<Database>) -> Result<Self> {
-        let engine = Self {
+        let mut engine = Self {
             policies: Vec::new(),
             db,
             cache: DashMap::new(),
@@ -302,8 +302,8 @@ impl PolicyEngine {
             default_action: PolicyAction::Deny,
         };
         
-        // Load policies from database
-        // engine.load_policies()?;
+        // Load persisted policies so evaluation and UI stay in sync across restarts.
+        engine.load_policies()?;
         
         Ok(engine)
     }

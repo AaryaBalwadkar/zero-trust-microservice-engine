@@ -11,3 +11,4 @@ pub mod alerts;
 pub mod dashboard;
 pub mod audit;
 pub mod config;
+pub mod dev;

@@ -1,0 +1,62 @@
+[general]
+autostart = false
+theme = "dark"
+notifications_enabled = true
+inactivity_lock_minutes = 15
+
+[identity]
+trust_domain = "zerotrust.local"
+jwt_expiration_seconds = 900
+ca_key_path = "/home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data/ca.key"
+ca_cert_path = "/home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data/ca.crt"
+certs_path = "/home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data/certs"
+
+[policy]
+cache_ttl_seconds = 5
+max_cache_entries = 10000
+default_action = "Deny"
+
+[wireguard]
+listen_port = 51820
+virtual_subnet = "10.128.0.0/16"
+keepalive_seconds = 25
+key_rotation_days = 7
+mtu = 1420
+
+[ebpf]
+enabled = true
+interface = "eth0"
+syn_flood_threshold = 100
+port_scan_threshold = 50
+http_flood_threshold = 1000
+icmp_flood_threshold = 500
+drop_log_sample_rate = 0.10000000149011612
+
+[attestation]
+tpm_enabled = false
+recalculation_interval_seconds = 30
+tpm_weight = 0.4000000059604645
+process_integrity_weight = 0.25
+behavioral_weight = 0.20000000298023224
+resource_weight = 0.15000000596046448
+full_access_threshold = 0.800000011920929
+limited_access_threshold = 0.5
+isolation_threshold = 0.30000001192092896
+termination_threshold = 0.30000001192092896
+
+[storage]
+database_path = "/home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data/zerotrust.db"
+log_retention_days = 90
+max_alerts = 1000000
+
+[logging]
+level = "info"
+file_enabled = true
+file_path = "/home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/logs/app.log"
+max_file_size_mb = 100
+
+[network]
+api_port = 8080
+websocket_port = 8081
+discovery_interval_seconds = 5
+dns_resolver = "1.1.1.1"

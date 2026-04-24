@@ -1,6 +1,6 @@
 //! Attack detection Tauri commands
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::command;
 use tracing::info;
 
@@ -136,7 +136,7 @@ pub async fn blacklist_ip(
     state.db.execute(
         "INSERT OR REPLACE INTO blacklist (ip, reason, auto_generated, expires_at, created_at)
          VALUES (?1, ?2, 0, ?3, ?4)",
-        &[&ip, &reason, &expires_at, &chrono::Utc::now().to_rfc3339()],
+        &[&ip, &reason, expires_at.as_ref().unwrap(), &chrono::Utc::now().to_rfc3339()],
     ).map_err(|e| e.to_string())?;
     
     info!("Blacklisted IP {}: {}", ip, reason);

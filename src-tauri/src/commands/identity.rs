@@ -31,7 +31,7 @@ pub struct ServiceResponse {
 #[command]
 pub async fn register_service(request: RegisterServiceRequest) -> Result<ServiceResponse, String> {
     let state = get_app_state().ok_or("Application not initialized")?;
-    let mut provider = state.identity_provider.write();
+    let provider = state.identity_provider.write();
     
     let binary_path = request.binary_path.as_ref().map(std::path::Path::new);
     

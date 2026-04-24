@@ -1,6 +1,6 @@
 //! Attestation and trust scoring Tauri commands
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::command;
 use tracing::info;
 

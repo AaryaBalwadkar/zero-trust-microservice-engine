@@ -15,6 +15,8 @@ pub struct ConfigResponse {
     pub wireguard: WireGuardConfigResponse,
     pub ebpf: EbpfConfigResponse,
     pub attestation: AttestationConfigResponse,
+    pub storage: StorageConfigResponse,
+    pub logging: LoggingConfigResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +65,31 @@ pub struct AttestationConfigResponse {
     pub isolation_threshold: f32,
 }
 
+#[derive(Debug, Serialize)]
+pub struct StorageConfigResponse {
+    pub database_path: String,
+    pub log_retention_days: u32,
+    pub max_alerts: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoggingConfigResponse {
+    pub level: String,
+    pub file_enabled: bool,
+    pub file_path: String,
+    pub max_file_size_mb: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DatabaseStatsResponse {
+    pub service_count: u64,
+    pub policy_count: u64,
+    pub tunnel_count: u64,
+    pub attack_count_24h: u64,
+    pub unacknowledged_alerts: u64,
+    pub blacklist_count: u64,
+}
+
 /// Get current configuration
 #[command]
 pub async fn get_config() -> Result<ConfigResponse, String> {
@@ -104,6 +131,33 @@ pub async fn get_config() -> Result<ConfigResponse, String> {
             limited_access_threshold: config.attestation.limited_access_threshold,
             isolation_threshold: config.attestation.isolation_threshold,
         },
+        storage: StorageConfigResponse {
+            database_path: config.storage.database_path.display().to_string(),
+            log_retention_days: config.storage.log_retention_days,
+            max_alerts: config.storage.max_alerts,
+        },
+        logging: LoggingConfigResponse {
+            level: config.logging.level.clone(),
+            file_enabled: config.logging.file_enabled,
+            file_path: config.logging.file_path.display().to_string(),
+            max_file_size_mb: config.logging.max_file_size_mb,
+        },
+    })
+}
+
+/// Get current database statistics
+#[command]
+pub async fn get_database_stats() -> Result<DatabaseStatsResponse, String> {
+    let state = get_app_state().ok_or("Application not initialized")?;
+    let stats = state.db.get_stats().map_err(|e| e.to_string())?;
+
+    Ok(DatabaseStatsResponse {
+        service_count: stats.service_count,
+        policy_count: stats.policy_count,
+        tunnel_count: stats.tunnel_count,
+        attack_count_24h: stats.attack_count_24h,
+        unacknowledged_alerts: stats.unacknowledged_alerts,
+        blacklist_count: stats.blacklist_count,
     })
 }
 
@@ -128,7 +182,7 @@ pub async fn update_config(request: UpdateConfigRequest) -> Result<(), String> {
     state.db.execute(
         "INSERT INTO config_changes (config_key, old_value, new_value, created_at)
          VALUES (?1, ?2, ?3, ?4)",
-        &[&old_value, &"(previous)", &new_value, &chrono::Utc::now().to_rfc3339()],
+        &[&old_value, &"(previous)".to_string(), &new_value, &chrono::Utc::now().to_rfc3339()],
     ).ok();
     
     // Apply update based on section and key

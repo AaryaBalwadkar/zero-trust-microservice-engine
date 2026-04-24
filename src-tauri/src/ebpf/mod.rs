@@ -235,6 +235,7 @@ impl RateTracker {
         entry.len() as u64
     }
     
+    #[cfg(test)]
     fn get_rate(&self, ip: &IpAddr) -> u64 {
         let now = Utc::now();
         let cutoff = now - self.window_duration;

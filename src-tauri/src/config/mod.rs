@@ -5,11 +5,13 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use validator::Validate;
 
 /// Default configuration file path
+#[cfg(not(debug_assertions))]
 const DEFAULT_CONFIG_PATH: &str = "/etc/zerotrust-mesh/config.toml";
 
 /// Main configuration structure
@@ -205,6 +207,7 @@ pub struct NetworkConfig {
 
 impl Default for Config {
     fn default() -> Self {
+        let paths = default_runtime_paths();
         Self {
             general: GeneralConfig {
                 autostart: false,
@@ -215,9 +218,9 @@ impl Default for Config {
             identity: IdentityConfig {
                 trust_domain: "zerotrust.local".to_string(),
                 jwt_expiration_seconds: 900, // 15 minutes
-                ca_key_path: PathBuf::from("/var/lib/zerotrust-mesh/ca.key"),
-                ca_cert_path: PathBuf::from("/var/lib/zerotrust-mesh/ca.crt"),
-                certs_path: PathBuf::from("/var/lib/zerotrust-mesh/certs"),
+                ca_key_path: paths.data_dir.join("ca.key"),
+                ca_cert_path: paths.data_dir.join("ca.crt"),
+                certs_path: paths.data_dir.join("certs"),
             },
             policy: PolicyConfig {
                 cache_ttl_seconds: 5,
@@ -241,7 +244,7 @@ impl Default for Config {
                 drop_log_sample_rate: 0.1,
             },
             attestation: AttestationConfig {
-                tpm_enabled: true,
+                tpm_enabled: !cfg!(debug_assertions),
                 recalculation_interval_seconds: 30,
                 tpm_weight: 0.40,
                 process_integrity_weight: 0.25,
@@ -253,14 +256,14 @@ impl Default for Config {
                 termination_threshold: 0.3,
             },
             storage: StorageConfig {
-                database_path: PathBuf::from("/var/lib/zerotrust-mesh/zerotrust.db"),
+                database_path: paths.data_dir.join("zerotrust.db"),
                 log_retention_days: 90,
                 max_alerts: 1000000,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
                 file_enabled: true,
-                file_path: PathBuf::from("/var/log/zerotrust-mesh/app.log"),
+                file_path: paths.log_dir.join("app.log"),
                 max_file_size_mb: 100,
             },
             network: NetworkConfig {
@@ -273,21 +276,87 @@ impl Default for Config {
     }
 }
 
+struct RuntimePaths {
+    data_dir: PathBuf,
+    log_dir: PathBuf,
+}
+
+pub fn default_config_path() -> PathBuf {
+    #[cfg(debug_assertions)]
+    {
+        return project_base_dir()
+            .join(".dev-data")
+            .join("zerotrust-mesh")
+            .join("config.toml");
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        PathBuf::from(DEFAULT_CONFIG_PATH)
+    }
+}
+
+fn default_runtime_paths() -> RuntimePaths {
+    #[cfg(debug_assertions)]
+    {
+        let base = project_base_dir()
+            .join(".dev-data")
+            .join("zerotrust-mesh");
+
+        return RuntimePaths {
+            data_dir: base.join("data"),
+            log_dir: base.join("logs"),
+        };
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        RuntimePaths {
+            data_dir: PathBuf::from("/var/lib/zerotrust-mesh"),
+            log_dir: PathBuf::from("/var/log/zerotrust-mesh"),
+        }
+    }
+}
+
+fn project_base_dir() -> PathBuf {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match cwd.file_name().and_then(|name| name.to_str()) {
+        Some("src-tauri") => cwd.parent().map(Path::to_path_buf).unwrap_or(cwd),
+        _ => cwd,
+    }
+}
+
 impl Config {
     /// Load configuration from file, falling back to defaults
     pub fn load(path: Option<&str>) -> Result<Self> {
-        let config_path = path.unwrap_or(DEFAULT_CONFIG_PATH);
+        let config_path = path
+            .map(PathBuf::from)
+            .unwrap_or_else(default_config_path);
         
-        if Path::new(config_path).exists() {
-            let content = fs::read_to_string(config_path)
-                .context(format!("Failed to read config file: {}", config_path))?;
+        if config_path.exists() {
+            let content = fs::read_to_string(&config_path)
+                .context(format!("Failed to read config file: {}", config_path.display()))?;
             let config: Config = toml::from_str(&content)
                 .context("Failed to parse configuration file")?;
             config.validate().context("Configuration validation failed")?;
             Ok(config)
         } else {
-            tracing::warn!("Config file not found at {}, using defaults", config_path);
-            Ok(Self::default())
+            let config = Self::default();
+
+            if path.is_none() && cfg!(debug_assertions) {
+                config.save(config_path.to_string_lossy().as_ref())?;
+                tracing::info!(
+                    "Created development config at {}",
+                    config_path.display()
+                );
+            } else {
+                tracing::warn!(
+                    "Config file not found at {}, using defaults",
+                    config_path.display()
+                );
+            }
+
+            Ok(config)
         }
     }
     
