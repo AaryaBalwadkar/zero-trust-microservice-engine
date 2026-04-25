@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { currentSection, type NavigationSection } from '$lib/navigation';
+	import { scanStore } from '$lib/scanStore';
 	import {
 		alerts,
 		attacks,
@@ -24,7 +25,10 @@
 		type TpmStatus,
 		type Tunnel
 	} from '$lib/api';
-	import { Activity, AlertTriangle, FileText, Lock, Network, Server, Settings } from 'lucide-svelte';
+	import {
+		Activity, AlertTriangle, FileText, Lock, Network, Server, Settings,
+		ChevronDown, ChevronRight, Zap, Plus, Eye, Ban, CheckCheck, Download
+	} from 'lucide-svelte';
 
 	type AttackStats = {
 		total_24h: number;
@@ -109,6 +113,30 @@
 	let actionMessage = '';
 	let errorMessage = '';
 
+	// Per-service expand state
+	let expandedServiceId: string | null = null;
+
+	// Policy evaluator
+	let policyEvalForm = { source_spiffe_id: '', dest_spiffe_id: '', source_ip: '', dest_port: 0, trust_score: 0.8 };
+	let policyEvalResult: { action: string; matched_policy_name?: string; deny_reason?: string; evaluation_time_us: number } | null = null;
+	let isEvaluatingPolicy = false;
+
+	// Policy create
+	let createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', threshold: 0.5 };
+	let isCreatingPolicy = false;
+	let showCreatePolicy = false;
+
+	// Blacklist form
+	let blacklistForm = { ip: '', reason: '', duration_hours: '' };
+	let isBlacklistingIp = false;
+
+	// Alert acknowledge
+	let isAcknowledgingAlertId: number | null = null;
+
+	// Audit filter
+	let auditFilter = '';
+	let isExportingLogs = false;
+
 	let dashboardData: DashboardData = {
 		services: { total: 0, active: 0, healthy: 0, warning: 0, critical: 0 },
 		attacks: { total_24h: 0, blocked_24h: 0, by_hour: [], top_types: [] },
@@ -148,8 +176,15 @@
 		endpoint: ''
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		hasMounted = true;
+		// Auto-scan on startup if services exist (silent background scan)
+		try {
+			const svcs = await identity.listServices();
+			if (svcs.length > 0 && !lastServiceScanSummary) {
+				await runServiceScans(true);
+			}
+		} catch { /* silent */ }
 	});
 
 	$: activeSection = $currentSection;
@@ -328,24 +363,126 @@
 		}
 	}
 
-	async function runServiceScans() {
+	async function runServiceScans(silent = false) {
 		isScanningServices = true;
-		errorMessage = '';
+		scanStore.update(s => ({ ...s, isScanning: true }));
+		if (!silent) errorMessage = '';
 
 		try {
 			const summary = await attestation.scanRegisteredServices();
 			lastServiceScanSummary = summary;
-			actionMessage =
-				summary.scanned === 0
-					? 'No active services are registered yet, so there was nothing to scan.'
-					: `Service scan finished: ${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped.`;
+			scanStore.update(s => ({
+				...s,
+				lastScanSummary: summary,
+				lastScanTime: new Date().toISOString(),
+				isScanning: false
+			}));
+			if (!silent) {
+				actionMessage =
+					summary.scanned === 0
+						? 'No active services are registered yet, so there was nothing to scan.'
+						: `Scan complete: ${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped.`;
+			}
 			await refreshSection(activeSection);
 		} catch (error) {
+			scanStore.update(s => ({ ...s, isScanning: false }));
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to run service scans';
+			if (!silent) errorMessage = error instanceof Error ? error.message : 'Failed to run service scans';
 		} finally {
 			isScanningServices = false;
 		}
+	}
+
+	async function doEvaluatePolicy() {
+		isEvaluatingPolicy = true;
+		policyEvalResult = null;
+		try {
+			policyEvalResult = await policy.evaluatePolicy({
+				source_spiffe_id: policyEvalForm.source_spiffe_id || undefined,
+				dest_spiffe_id: policyEvalForm.dest_spiffe_id || undefined,
+				source_ip: policyEvalForm.source_ip || undefined,
+				dest_port: policyEvalForm.dest_port || undefined,
+				trust_score: policyEvalForm.trust_score
+			});
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Policy evaluation failed';
+		} finally {
+			isEvaluatingPolicy = false;
+		}
+	}
+
+	async function doCreatePolicy() {
+		if (!createPolicyForm.name.trim()) { errorMessage = 'Policy name is required.'; return; }
+		isCreatingPolicy = true;
+		try {
+			const condition = createPolicyForm.condition_type === 'trust_score'
+				? { RiskScore: { operator: 'LessThan', threshold: createPolicyForm.threshold } }
+				: [];
+			await policy.createPolicy({
+				name: createPolicyForm.name.trim(),
+				priority: Number(createPolicyForm.priority),
+				action: createPolicyForm.action,
+				conditions: Array.isArray(condition) ? condition : [condition]
+			});
+			actionMessage = `Policy "${createPolicyForm.name}" created.`;
+			createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', threshold: 0.5 };
+			showCreatePolicy = false;
+			await loadPoliciesSection();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to create policy';
+		} finally {
+			isCreatingPolicy = false;
+		}
+	}
+
+	async function doBlacklistIp() {
+		if (!blacklistForm.ip.trim() || !blacklistForm.reason.trim()) {
+			errorMessage = 'IP address and reason are required.';
+			return;
+		}
+		isBlacklistingIp = true;
+		try {
+			const hours = blacklistForm.duration_hours ? Number(blacklistForm.duration_hours) : undefined;
+			await attacks.blacklistIp(blacklistForm.ip.trim(), blacklistForm.reason.trim(), hours);
+			actionMessage = `IP ${blacklistForm.ip} blacklisted.`;
+			blacklistForm = { ip: '', reason: '', duration_hours: '' };
+			await loadAttacksSection();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to blacklist IP';
+		} finally {
+			isBlacklistingIp = false;
+		}
+	}
+
+	async function doAcknowledgeAlert(alertId: number) {
+		isAcknowledgingAlertId = alertId;
+		try {
+			await alerts.acknowledgeAlert(alertId);
+			await loadAttacksSection();
+			if (activeSection === 'dashboard') await loadDashboardSection();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to acknowledge alert';
+		} finally {
+			isAcknowledgingAlertId = null;
+		}
+	}
+
+	async function doExportLogs() {
+		isExportingLogs = true;
+		try {
+			const path = await audit.exportLogs();
+			actionMessage = `Audit logs exported to: ${path}`;
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Export failed';
+		} finally {
+			isExportingLogs = false;
+		}
+	}
+
+	async function loadFilteredAudit() {
+		try {
+			auditLogs = await audit.getLogs(auditFilter || undefined, 100, 0);
+		} catch { /* ignore */ }
 	}
 
 	async function createTunnel() {
@@ -461,17 +598,44 @@
 			<button class="btn btn-secondary" on:click={() => refreshSection(activeSection)} disabled={isLoading}>
 				{isLoading ? 'Refreshing...' : 'Refresh'}
 			</button>
-			<button class="btn btn-primary" on:click={loadDemoData} disabled={isSeeding}>
-				{isSeeding ? 'Loading Demo...' : 'Load Demo Data'}
-			</button>
+			{#if activeSection === 'dashboard' || activeSection === 'services'}
+				<button class="btn btn-primary flex items-center gap-2" on:click={() => runServiceScans()} disabled={isScanningServices}>
+					<Zap class="h-4 w-4" />
+					{isScanningServices ? 'Scanning...' : 'Scan All Services'}
+				</button>
+			{/if}
 		</div>
 	</div>
 
-	<div class="rounded-lg border border-blue-500/30 bg-blue-950/30 px-4 py-3 text-sm text-blue-100">
-		The desktop UI shows real database-backed state. Service attestation scans can be run manually from
-		this screen, while live packet capture and OS-level tunnel setup are still not auto-started by this
-		build.
-	</div>
+	<!-- Live status bar replacing old blue banner -->
+	{#if $scanStore.lastScanSummary}
+		<div class="flex items-center gap-4 rounded-lg border px-4 py-3 text-sm
+			{$scanStore.lastScanSummary.failed > 0
+				? 'border-red-500/30 bg-red-950/30 text-red-100'
+				: 'border-green-500/30 bg-green-950/30 text-green-100'}">
+			<span class="font-medium">Last scan:</span>
+			<span>{$scanStore.lastScanSummary.scanned} services —
+				{$scanStore.lastScanSummary.passed} passed
+				{#if $scanStore.lastScanSummary.failed > 0}
+					· <span class="font-semibold">{$scanStore.lastScanSummary.failed} FAILED</span>
+				{/if}
+				{#if $scanStore.lastScanSummary.skipped > 0}
+					· {$scanStore.lastScanSummary.skipped} skipped
+				{/if}
+			</span>
+			{#if $scanStore.lastScanTime}
+				<span class="ml-auto text-xs opacity-70">{new Date($scanStore.lastScanTime).toLocaleTimeString()}</span>
+			{/if}
+		</div>
+	{:else if !isScanningServices}
+		<div class="rounded-lg border border-slate-600/40 bg-slate-800/40 px-4 py-3 text-sm text-slate-400">
+			No scan has run yet. Click <strong class="text-slate-200">Scan All Services</strong> to measure binary hashes and refresh trust scores, or go to <strong class="text-slate-200">Settings → Development Tools</strong> to load a demo workspace.
+		</div>
+	{:else}
+		<div class="rounded-lg border border-blue-500/30 bg-blue-950/30 px-4 py-3 text-sm text-blue-200">
+			Scanning services — measuring SHA-256 hashes and updating trust scores…
+		</div>
+	{/if}
 
 	{#if actionMessage}
 		<div class="rounded-lg border border-green-500/30 bg-green-950/30 px-4 py-3 text-sm text-green-100">
@@ -767,28 +931,71 @@
 							<tbody>
 								{#each services as service}
 									{@const scanResult = getLatestScanResult(service.id)}
-									<tr>
-										<td>{service.name}</td>
-										<td class="max-w-[240px] truncate text-slate-300">{service.spiffe_id}</td>
+									{@const isExpanded = expandedServiceId === service.id}
+									<tr class="cursor-pointer" on:click={() => expandedServiceId = isExpanded ? null : service.id}>
+										<td class="font-medium">
+											<div class="flex items-center gap-2">
+												{#if isExpanded}<ChevronDown class="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />{:else}<ChevronRight class="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />{/if}
+												{service.name}
+											</div>
+										</td>
+										<td class="max-w-[200px] truncate text-slate-300 font-mono text-xs">{service.spiffe_id}</td>
 										<td>{service.port}</td>
 										<td><span class={getStatusBadgeClass(service.status)}>{service.status}</span></td>
-										<td>{Math.round(service.trust_score * 100)}%</td>
-										<td class="max-w-[220px] truncate text-slate-300">
-											{service.binary_path ?? 'Not configured'}
+										<td>
+											<div class="flex items-center gap-2">
+												<div class="h-1.5 w-16 rounded-full bg-slate-700 overflow-hidden">
+													<div class="h-full rounded-full {getTrustColor(service.trust_score)}" style="width:{service.trust_score*100}%"></div>
+												</div>
+												<span>{Math.round(service.trust_score * 100)}%</span>
+											</div>
 										</td>
+										<td class="max-w-[180px] truncate text-slate-300 font-mono text-xs">{service.binary_path ?? '—'}</td>
 										<td>
 											{#if scanResult}
-												<div class="space-y-1">
-													<span class={getScanStatusBadgeClass(scanResult.status)}>{scanResult.status}</span>
-													<p class="max-w-[260px] truncate text-xs text-slate-400">
-														{scanResult.reason ?? 'Binary measured successfully'}
-													</p>
-												</div>
+												<span class={getScanStatusBadgeClass(scanResult.status)}>{scanResult.status}</span>
 											{:else}
-												<span class="text-slate-500">Not run yet</span>
+												<span class="text-slate-500 text-xs">Not run yet</span>
 											{/if}
 										</td>
 									</tr>
+									{#if isExpanded}
+										<tr class="bg-slate-900/60">
+											<td colspan="7" class="px-4 py-4">
+												<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+													<div class="space-y-2">
+														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Binary Attestation</p>
+														{#if scanResult}
+															<div class="space-y-1 font-mono text-xs">
+																<p class="text-slate-400">Measured SHA-256:</p>
+																<p class="break-all text-green-300">{scanResult.measured_sha256 ?? 'N/A'}</p>
+																<p class="text-slate-400 mt-2">Expected SHA-256:</p>
+																<p class="break-all text-slate-300">{scanResult.expected_sha256 ?? 'Not set (first scan stores baseline)'}</p>
+																<p class="text-slate-500 mt-2">Measured at: {formatDate(scanResult.measured_at)}</p>
+															</div>
+														{:else}
+															<p class="text-xs text-slate-500">Run a scan to see binary hash details.</p>
+														{/if}
+													</div>
+													<div class="space-y-2">
+														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Trust Score Detail</p>
+														{#if scanResult}
+															<div class="space-y-1.5 text-xs">
+																{#each [['Trust Level', scanResult.trust_level], ['Score', `${Math.round(scanResult.trust_score * 100)}%`], ['Reason', scanResult.reason ?? '—']] as [label, val]}
+																	<div class="flex justify-between">
+																		<span class="text-slate-400">{label}</span>
+																		<span class="text-slate-200">{val}</span>
+																	</div>
+																{/each}
+															</div>
+														{:else}
+															<p class="text-xs text-slate-500">No trust score data yet.</p>
+														{/if}
+													</div>
+												</div>
+											</td>
+										</tr>
+									{/if}
 								{/each}
 							</tbody>
 						</table>
@@ -797,51 +1004,129 @@
 			</div>
 		</div>
 	{:else if activeSection === 'policies'}
-		<div class="card">
-			<div class="card-header">
-				<h2 class="card-title">Persisted Policies</h2>
-				<span class="text-sm text-slate-400">{policies.length} total</span>
-			</div>
-			<p class="mb-4 text-sm text-slate-400">
-				The policy engine persists and evaluates stored rules, but this desktop UI currently focuses on
-				inspection rather than a full visual policy builder. Use demo data or the backend API to create
-				policies.
-			</p>
-			{#if policies.length === 0}
-				<p class="text-sm text-slate-400">No policies are stored yet.</p>
-			{:else}
-				<div class="overflow-x-auto">
-					<table class="table">
-						<thead>
-							<tr>
-								<th>Name</th>
-								<th>Action</th>
-								<th>Priority</th>
-								<th>Enabled</th>
-								<th>Conditions</th>
-								<th>Hit Count</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each policies as policyItem}
-								<tr>
-									<td>
-										<div class="font-medium text-slate-100">{policyItem.name}</div>
-										{#if policyItem.description}
-											<div class="text-xs text-slate-400">{policyItem.description}</div>
-										{/if}
-									</td>
-									<td>{policyItem.action}</td>
-									<td>{policyItem.priority}</td>
-									<td>{policyItem.enabled ? 'Yes' : 'No'}</td>
-									<td>{Array.isArray(policyItem.conditions) ? policyItem.conditions.length : 0}</td>
-									<td>{policyItem.hit_count}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+		<div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+			<!-- Policy List + Create -->
+			<div class="space-y-4">
+				<div class="card">
+					<div class="card-header">
+						<h2 class="card-title">Persisted Policies</h2>
+						<button class="btn btn-secondary flex items-center gap-1 py-1 px-3 text-sm" on:click={() => showCreatePolicy = !showCreatePolicy}>
+							<Plus class="h-4 w-4" /> New Policy
+						</button>
+					</div>
+					{#if showCreatePolicy}
+						<form class="mb-4 rounded-lg border border-slate-600 bg-slate-900/50 p-4 space-y-3" on:submit|preventDefault={doCreatePolicy}>
+							<p class="text-sm font-semibold text-slate-200">Create Policy</p>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label class="mb-1 block text-xs text-slate-400" for="cp-name">Name</label>
+									<input id="cp-name" class="input" bind:value={createPolicyForm.name} placeholder="Deny Low Trust" />
+								</div>
+								<div>
+									<label class="mb-1 block text-xs text-slate-400" for="cp-priority">Priority</label>
+									<input id="cp-priority" class="input" type="number" bind:value={createPolicyForm.priority} min="1" />
+								</div>
+							</div>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label class="mb-1 block text-xs text-slate-400" for="cp-action">Action</label>
+									<select id="cp-action" class="input" bind:value={createPolicyForm.action}>
+										<option>Allow</option>
+										<option>Deny</option>
+										<option>Log</option>
+									</select>
+								</div>
+								<div>
+									<label class="mb-1 block text-xs text-slate-400" for="cp-threshold">Trust Threshold</label>
+									<input id="cp-threshold" class="input" type="number" step="0.05" min="0" max="1" bind:value={createPolicyForm.threshold} />
+								</div>
+							</div>
+							<p class="text-xs text-slate-500">Condition: trust score &lt; threshold → apply action</p>
+							<button class="btn btn-primary w-full" disabled={isCreatingPolicy}>
+								{isCreatingPolicy ? 'Creating...' : 'Create Policy'}
+							</button>
+						</form>
+					{/if}
+					{#if policies.length === 0}
+						<p class="text-sm text-slate-400">No policies stored yet. Create one above or load a demo workspace from Settings.</p>
+					{:else}
+						<div class="overflow-x-auto">
+							<table class="table">
+								<thead><tr><th>Name</th><th>Action</th><th>Priority</th><th>Enabled</th><th>Hits</th></tr></thead>
+								<tbody>
+									{#each policies as p}
+										<tr>
+											<td>
+												<div class="font-medium text-slate-100">{p.name}</div>
+												{#if p.description}<div class="text-xs text-slate-400">{p.description}</div>{/if}
+											</td>
+											<td><span class={p.action === 'Allow' ? 'badge badge-success' : p.action === 'Deny' ? 'badge badge-danger' : 'badge badge-info'}>{p.action}</span></td>
+											<td>{p.priority}</td>
+											<td>{p.enabled ? 'Yes' : 'No'}</td>
+											<td>{p.hit_count}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
 				</div>
-			{/if}
+			</div>
+
+			<!-- Policy Evaluator -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">Live Policy Evaluator</h2>
+					<Eye class="h-5 w-5 text-slate-400" />
+				</div>
+				<p class="mb-4 text-sm text-slate-400">Test a request against all active policies. Results come from the real policy engine.</p>
+				<form class="space-y-3" on:submit|preventDefault={doEvaluatePolicy}>
+					<div class="grid grid-cols-2 gap-3">
+						<div>
+							<label class="mb-1 block text-xs text-slate-400" for="eval-src">Source SPIFFE ID</label>
+							<input id="eval-src" class="input" bind:value={policyEvalForm.source_spiffe_id} placeholder="spiffe://domain/svc-a" />
+						</div>
+						<div>
+							<label class="mb-1 block text-xs text-slate-400" for="eval-dst">Dest SPIFFE ID</label>
+							<input id="eval-dst" class="input" bind:value={policyEvalForm.dest_spiffe_id} placeholder="spiffe://domain/svc-b" />
+						</div>
+					</div>
+					<div class="grid grid-cols-2 gap-3">
+						<div>
+							<label class="mb-1 block text-xs text-slate-400" for="eval-ip">Source IP</label>
+							<input id="eval-ip" class="input" bind:value={policyEvalForm.source_ip} placeholder="10.0.0.1" />
+						</div>
+						<div>
+							<label class="mb-1 block text-xs text-slate-400" for="eval-port">Dest Port</label>
+							<input id="eval-port" class="input" type="number" bind:value={policyEvalForm.dest_port} placeholder="443" />
+						</div>
+					</div>
+					<div>
+						<label class="mb-1 block text-xs text-slate-400" for="eval-trust">Trust Score: {policyEvalForm.trust_score.toFixed(2)}</label>
+						<input id="eval-trust" class="w-full" type="range" min="0" max="1" step="0.05" bind:value={policyEvalForm.trust_score} />
+					</div>
+					<button class="btn btn-primary w-full flex items-center justify-center gap-2" disabled={isEvaluatingPolicy}>
+						<Zap class="h-4 w-4" />
+						{isEvaluatingPolicy ? 'Evaluating...' : 'Evaluate Against Policies'}
+					</button>
+				</form>
+				{#if policyEvalResult}
+					<div class="mt-4 rounded-lg border p-4 {policyEvalResult.action === 'Allow' ? 'border-green-500/40 bg-green-950/30' : policyEvalResult.action === 'Deny' ? 'border-red-500/40 bg-red-950/30' : 'border-slate-600 bg-slate-800/50'}">
+						<p class="text-lg font-bold {policyEvalResult.action === 'Allow' ? 'text-green-400' : policyEvalResult.action === 'Deny' ? 'text-red-400' : 'text-slate-200'}">
+							→ {policyEvalResult.action}
+						</p>
+						{#if policyEvalResult.matched_policy_name}
+							<p class="mt-1 text-sm text-slate-300">Matched: <span class="font-medium">{policyEvalResult.matched_policy_name}</span></p>
+						{:else}
+							<p class="mt-1 text-sm text-slate-400">No policy matched — default action applied.</p>
+						{/if}
+						{#if policyEvalResult.deny_reason}
+							<p class="mt-1 text-xs text-red-300">{policyEvalResult.deny_reason}</p>
+						{/if}
+						<p class="mt-2 text-xs text-slate-500">Evaluated in {policyEvalResult.evaluation_time_us} µs</p>
+					</div>
+				{/if}
+			</div>
 		</div>
 	{:else if activeSection === 'mesh'}
 		<div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -978,16 +1263,66 @@
 			</div>
 		</div>
 
-		<div class="card">
-			<div class="card-header">
-				<h2 class="card-title">Detection Status</h2>
-				<AlertTriangle class="h-5 w-5 text-slate-400" />
+		<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+			<!-- Blacklist IP Form -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">Blacklist IP</h2>
+					<Ban class="h-5 w-5 text-red-400" />
+				</div>
+				<form class="space-y-3" on:submit|preventDefault={doBlacklistIp}>
+					<div>
+						<label class="mb-1 block text-xs text-slate-400" for="bl-ip">IP Address</label>
+						<input id="bl-ip" class="input" bind:value={blacklistForm.ip} placeholder="1.2.3.4" />
+					</div>
+					<div>
+						<label class="mb-1 block text-xs text-slate-400" for="bl-reason">Reason</label>
+						<input id="bl-reason" class="input" bind:value={blacklistForm.reason} placeholder="Repeated SYN flood" />
+					</div>
+					<div>
+						<label class="mb-1 block text-xs text-slate-400" for="bl-hours">Duration (hours, blank = permanent)</label>
+						<input id="bl-hours" class="input" type="number" bind:value={blacklistForm.duration_hours} placeholder="24" />
+					</div>
+					<button class="btn btn-danger w-full flex items-center justify-center gap-2" disabled={isBlacklistingIp}>
+						<Ban class="h-4 w-4" />
+						{isBlacklistingIp ? 'Blacklisting...' : 'Blacklist IP'}
+					</button>
+				</form>
 			</div>
-			<p class="text-sm text-slate-300">
-				The repository contains an attack detector library and attack tables, but the desktop app does not
-				currently start a live packet ingestion loop on its own. This page shows whatever has been recorded
-				in SQLite, including demo data and any future detector integrations.
-			</p>
+			<!-- Recent Alerts with Acknowledge -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">Recent Alerts</h2>
+					<span class="badge badge-danger">{recentAlerts.filter(a => !a.acknowledged).length} open</span>
+				</div>
+				<div class="space-y-2">
+					{#if recentAlerts.length === 0}
+						<p class="text-sm text-slate-400">No alerts recorded yet.</p>
+					{:else}
+						{#each recentAlerts as alert}
+							<div class="flex items-start justify-between gap-3 rounded-lg border border-slate-700 bg-slate-700/30 p-3">
+								<div class="min-w-0">
+									<p class="text-sm font-medium {getSeverityClass(alert.severity)}">{alert.title}</p>
+									<p class="text-xs text-slate-400 mt-0.5">{alert.message}</p>
+									<p class="text-xs text-slate-500 mt-1">{formatDate(alert.created_at)}</p>
+								</div>
+								{#if !alert.acknowledged}
+									<button
+										class="btn btn-secondary flex items-center gap-1 py-1 px-2 text-xs flex-shrink-0"
+										on:click={() => doAcknowledgeAlert(alert.id)}
+										disabled={isAcknowledgingAlertId === alert.id}
+									>
+										<CheckCheck class="h-3 w-3" />
+										{isAcknowledgingAlertId === alert.id ? '...' : 'Ack'}
+									</button>
+								{:else}
+									<span class="text-xs text-slate-500 flex-shrink-0">Ack'd</span>
+								{/if}
+							</div>
+						{/each}
+					{/if}
+				</div>
+			</div>
 		</div>
 
 		<div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -1084,7 +1419,21 @@
 		<div class="card">
 			<div class="card-header">
 				<h2 class="card-title">Audit Log</h2>
-				<span class="text-sm text-slate-400">{auditLogs.length} events</span>
+				<div class="flex items-center gap-2">
+					<select class="input py-1 px-2 text-sm" bind:value={auditFilter} on:change={loadFilteredAudit}>
+						<option value="">All events</option>
+						<option value="identity">identity</option>
+						<option value="policy">policy</option>
+						<option value="attestation">attestation</option>
+						<option value="attack">attack</option>
+						<option value="system">system</option>
+					</select>
+					<button class="btn btn-secondary flex items-center gap-1 py-1 px-3 text-sm" on:click={doExportLogs} disabled={isExportingLogs}>
+						<Download class="h-4 w-4" />
+						{isExportingLogs ? 'Exporting...' : 'Export'}
+					</button>
+					<span class="text-sm text-slate-400">{auditLogs.length} events</span>
+				</div>
 			</div>
 			{#if auditLogs.length === 0}
 				<p class="text-sm text-slate-400">No audit records are available yet.</p>
@@ -1105,10 +1454,10 @@
 							{#each auditLogs as log}
 								<tr>
 									<td>{formatDate(log.created_at)}</td>
-									<td>{log.event_type}</td>
+									<td><span class="badge badge-info">{log.event_type}</span></td>
 									<td>{log.action}</td>
 									<td>{log.subject ?? 'N/A'}</td>
-									<td>{log.success ? 'Yes' : 'No'}</td>
+									<td>{log.success ? '✓' : '✗'}</td>
 									<td class="max-w-[360px] truncate text-slate-300">{log.details ?? 'N/A'}</td>
 								</tr>
 							{/each}
@@ -1182,6 +1531,20 @@
 				{:else}
 					<p class="text-sm text-slate-400">Database statistics are not available yet.</p>
 				{/if}
+			</div>
+			<!-- Development Tools -->
+			<div class="card xl:col-span-1 border-orange-500/30">
+				<div class="card-header">
+					<h2 class="card-title text-orange-300">Development Tools</h2>
+					<AlertTriangle class="h-5 w-5 text-orange-400" />
+				</div>
+				<p class="mb-4 text-sm text-slate-400">
+					<strong class="text-orange-300">Warning:</strong> Loading a demo workspace clears ALL existing data — including any real services you registered.
+				</p>
+				<button class="btn btn-secondary w-full flex items-center justify-center gap-2" on:click={loadDemoData} disabled={isSeeding}>
+					{isSeeding ? 'Loading Demo Workspace...' : 'Load Demo Workspace'}
+				</button>
+				<p class="mt-2 text-xs text-slate-500">Inserts 3 services (mapped to /usr/bin/env, /bin/sh, /bin/ls), 2 policies, 1 tunnel, 3 attacks, 3 alerts. All data is real — binaries will be scanned for real SHA-256 hashes.</p>
 			</div>
 		</div>
 

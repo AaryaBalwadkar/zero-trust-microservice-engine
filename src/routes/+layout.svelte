@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { currentSection, type NavigationSection } from '$lib/navigation';
+	import { scanStore } from '$lib/scanStore';
 	import { 
 		Shield, 
 		Network, 
@@ -9,7 +10,10 @@
 		Activity,
 		FileText,
 		Server,
-		Lock
+		Lock,
+		CheckCircle,
+		XCircle,
+		Loader
 	} from 'lucide-svelte';
 
 	const navItems: Array<{ id: NavigationSection; label: string; icon: typeof Activity }> = [
@@ -21,6 +25,14 @@
 		{ id: 'audit', label: 'Audit', icon: FileText },
 		{ id: 'settings', label: 'Settings', icon: Settings },
 	];
+
+	function formatRelativeTime(isoString: string | null): string {
+		if (!isoString) return 'Never';
+		const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+		if (diff < 60) return `${diff}s ago`;
+		if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+		return `${Math.floor(diff / 3600)}h ago`;
+	}
 </script>
 
 <div class="flex h-screen bg-slate-900">
@@ -54,11 +66,41 @@
 			</ul>
 		</nav>
 		
-		<!-- Status -->
-		<div class="p-4 border-t border-slate-700">
+		<!-- Live Scan Status Footer -->
+		<div class="p-4 border-t border-slate-700 space-y-2">
+			{#if $scanStore.isScanning}
+				<div class="flex items-center gap-2 text-blue-400">
+					<Loader class="w-4 h-4 animate-spin" />
+					<span class="text-xs font-medium">Scanning services…</span>
+				</div>
+			{:else if $scanStore.lastScanSummary}
+				<div class="flex items-center gap-2">
+					{#if $scanStore.lastScanSummary.failed > 0}
+						<XCircle class="w-4 h-4 text-red-400 flex-shrink-0" />
+					{:else}
+						<CheckCircle class="w-4 h-4 text-green-400 flex-shrink-0" />
+					{/if}
+					<div class="min-w-0">
+						<p class="text-xs font-medium text-slate-200 leading-tight">
+							{$scanStore.lastScanSummary.passed} passed
+							{#if $scanStore.lastScanSummary.failed > 0}
+								· <span class="text-red-400">{$scanStore.lastScanSummary.failed} failed</span>
+							{/if}
+						</p>
+						<p class="text-xs text-slate-500">
+							{formatRelativeTime($scanStore.lastScanTime)}
+						</p>
+					</div>
+				</div>
+			{:else}
+				<div class="flex items-center gap-2">
+					<div class="w-2 h-2 rounded-full bg-slate-500 flex-shrink-0"></div>
+					<span class="text-xs text-slate-400">No scan run yet</span>
+				</div>
+			{/if}
 			<div class="flex items-center gap-2">
-				<div class="w-2 h-2 rounded-full bg-green-500"></div>
-				<span class="text-sm text-slate-400">Desktop Dev Mode</span>
+				<div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
+				<span class="text-xs text-slate-500">Desktop runtime active</span>
 			</div>
 		</div>
 	</aside>
