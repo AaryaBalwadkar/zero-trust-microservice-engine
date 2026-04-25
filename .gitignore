@@ -11,3 +11,8 @@ dist/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+.dev-data/
+*.db
+*.db-shm
+*.db-wal
