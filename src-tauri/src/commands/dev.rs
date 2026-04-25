@@ -2,6 +2,7 @@
 
 use chrono::{Duration, Utc};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use tauri::command;
 use tracing::info;
 use uuid::Uuid;
@@ -37,21 +38,29 @@ pub async fn seed_demo_data() -> Result<DemoDataResponse, String> {
         ];
 
         for (name, port, description) in sample_services {
+            let demo_binary_path = resolve_demo_binary_path(name);
             let (service, _cert) = provider
-                .register_service(name, port, Some(description), None)
+                .register_service(name, port, Some(description), demo_binary_path.as_deref())
                 .map_err(|e| e.to_string())?;
+
+            let binary_path = service
+                .binary_path
+                .as_ref()
+                .map(pathbuf_to_string);
 
             state
                 .db
                 .execute(
-                    "INSERT INTO services (id, spiffe_id, name, description, port, status, trust_score)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO services (id, spiffe_id, name, description, port, binary_path, binary_hash, status, trust_score)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     &[
                         &service.id,
                         &service.spiffe_id.to_uri(),
                         &service.name,
                         &service.description,
                         &(service.port as i32),
+                        &binary_path,
+                        &service.binary_hash,
                         &service.status.to_string(),
                         &service.trust_score,
                     ],
@@ -324,4 +333,48 @@ fn reset_demo_tables(state: &std::sync::Arc<zerotrust_mesh_lib::AppState>) -> Re
     }
 
     Ok(())
+}
+
+fn pathbuf_to_string(path: &PathBuf) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn find_first_existing_binary(candidates: &[&str]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .map(Path::new)
+        .find(|path| path.exists())
+        .map(PathBuf::from)
+}
+
+fn resolve_demo_binary_path(service_name: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = match service_name {
+        "API Gateway" => &[
+            "C:\\Windows\\System32\\cmd.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "C:\\Windows\\System32\\notepad.exe",
+        ],
+        "Auth Service" => &[
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "C:\\Windows\\System32\\cmd.exe",
+            "C:\\Windows\\System32\\notepad.exe",
+        ],
+        "Payments Worker" => &[
+            "C:\\Windows\\System32\\notepad.exe",
+            "C:\\Windows\\System32\\cmd.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        ],
+        _ => &[],
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let candidates: &[&str] = match service_name {
+        "API Gateway" => &["/usr/bin/env", "/bin/sh", "/bin/ls"],
+        "Auth Service" => &["/bin/sh", "/usr/bin/env", "/bin/ls"],
+        "Payments Worker" => &["/bin/ls", "/usr/bin/env", "/bin/sh"],
+        _ => &[],
+    };
+
+    find_first_existing_binary(candidates).or_else(|| std::env::current_exe().ok())
 }

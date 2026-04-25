@@ -65,6 +65,7 @@ fn main() {
             commands::attestation::list_trust_scores,
             commands::attestation::measure_binary,
             commands::attestation::get_tpm_status,
+            commands::attestation::scan_registered_services,
             
             // Attack detection commands
             commands::attacks::get_attack_stats,

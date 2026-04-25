@@ -8,6 +8,7 @@ export interface Service {
 	spiffe_id: string;
 	name: string;
 	description?: string;
+	binary_path?: string;
 	port: number;
 	status: string;
 	trust_score: number;
@@ -182,6 +183,29 @@ export interface TpmStatus {
 	last_check: string;
 }
 
+export interface ServiceScanResult {
+	service_id: string;
+	service_name: string;
+	binary_path?: string;
+	expected_sha256?: string;
+	measured_sha256?: string;
+	measured_at?: string;
+	trust_score: number;
+	trust_level: string;
+	status: string;
+	reason?: string;
+}
+
+export interface ServiceScanSummary {
+	started_at: string;
+	completed_at: string;
+	scanned: number;
+	passed: number;
+	failed: number;
+	skipped: number;
+	results: ServiceScanResult[];
+}
+
 export interface DemoDataResponse {
 	services: number;
 	policies: number;
@@ -270,6 +294,9 @@ export const attestation = {
 	}> => invoke('measure_binary', { path }),
 
 	getTpmStatus: (): Promise<TpmStatus> => invoke('get_tpm_status'),
+
+	scanRegisteredServices: (): Promise<ServiceScanSummary> =>
+		invoke('scan_registered_services'),
 };
 
 // Attacks API

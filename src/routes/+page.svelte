@@ -20,6 +20,7 @@
 		type DatabaseStats,
 		type Policy,
 		type Service,
+		type ServiceScanSummary,
 		type TpmStatus,
 		type Tunnel
 	} from '$lib/api';
@@ -104,6 +105,7 @@
 	let isSeeding = false;
 	let isRegisteringService = false;
 	let isCreatingTunnel = false;
+	let isScanningServices = false;
 	let actionMessage = '';
 	let errorMessage = '';
 
@@ -132,6 +134,7 @@
 	let configData: ConfigResponse | null = null;
 	let databaseStats: DatabaseStats | null = null;
 	let tpmStatus: TpmStatus | null = null;
+	let lastServiceScanSummary: ServiceScanSummary | null = null;
 
 	let serviceForm: ServiceRegistrationForm = {
 		name: '',
@@ -325,6 +328,26 @@
 		}
 	}
 
+	async function runServiceScans() {
+		isScanningServices = true;
+		errorMessage = '';
+
+		try {
+			const summary = await attestation.scanRegisteredServices();
+			lastServiceScanSummary = summary;
+			actionMessage =
+				summary.scanned === 0
+					? 'No active services are registered yet, so there was nothing to scan.'
+					: `Service scan finished: ${summary.passed} passed, ${summary.failed} failed, ${summary.skipped} skipped.`;
+			await refreshSection(activeSection);
+		} catch (error) {
+			console.error(error);
+			errorMessage = error instanceof Error ? error.message : 'Failed to run service scans';
+		} finally {
+			isScanningServices = false;
+		}
+	}
+
 	async function createTunnel() {
 		if (!tunnelForm.service_a_id || !tunnelForm.service_b_id) {
 			errorMessage = 'Select two services before creating a tunnel.';
@@ -392,6 +415,19 @@
 		}
 	}
 
+	function getScanStatusBadgeClass(status: string): string {
+		switch (status.toLowerCase()) {
+			case 'passed':
+				return 'badge badge-success';
+			case 'failed':
+				return 'badge badge-danger';
+			case 'skipped':
+				return 'badge badge-warning';
+			default:
+				return 'badge badge-info';
+		}
+	}
+
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return '0 B';
 		const k = 1024;
@@ -408,6 +444,10 @@
 
 	function serviceName(serviceId: string): string {
 		return services.find((service) => service.id === serviceId)?.name ?? serviceId;
+	}
+
+	function getLatestScanResult(serviceId: string) {
+		return lastServiceScanSummary?.results.find((result) => result.service_id === serviceId);
 	}
 </script>
 
@@ -428,9 +468,9 @@
 	</div>
 
 	<div class="rounded-lg border border-blue-500/30 bg-blue-950/30 px-4 py-3 text-sm text-blue-100">
-		The desktop UI now shows real database-backed state. Service discovery scans and live packet attack
-		detection are not started automatically by this build, so use registered services or the demo-data
-		bootstrap to populate the workspace.
+		The desktop UI shows real database-backed state. Service attestation scans can be run manually from
+		this screen, while live packet capture and OS-level tunnel setup are still not auto-started by this
+		build.
 	</div>
 
 	{#if actionMessage}
@@ -624,6 +664,7 @@
 				</div>
 				<ul class="space-y-2 text-sm text-slate-300">
 					<li>Services, policies, alerts, attacks, audit logs, and tunnel records are read from SQLite.</li>
+					<li>Manual service attestation scans are available from the Run Service Scan action.</li>
 					<li>Live network scanning and packet detection are not auto-started in this desktop build.</li>
 					<li>Use Load Demo Data to inspect the intended workflows with representative records.</li>
 				</ul>
@@ -664,6 +705,47 @@
 					<h2 class="card-title">Known Services</h2>
 					<span class="text-sm text-slate-400">{databaseStats?.service_count ?? services.length} active</span>
 				</div>
+				<div class="mb-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+					<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+						<div>
+							<p class="text-sm font-medium text-slate-100">Service Attestation Scan</p>
+							<p class="text-sm text-slate-400">
+								Run the real backend binary measurement and trust-score refresh for all active registered services in the database.
+							</p>
+						</div>
+						<button class="btn btn-secondary" on:click={runServiceScans} disabled={isScanningServices}>
+							{isScanningServices ? 'Scanning...' : 'Run Scan Now'}
+						</button>
+					</div>
+
+					{#if lastServiceScanSummary}
+						<div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+							<div class="rounded-lg bg-slate-700/40 p-3">
+								<p class="text-xs uppercase tracking-wide text-slate-400">Scanned</p>
+								<p class="mt-2 text-lg font-semibold text-slate-100">{lastServiceScanSummary.scanned}</p>
+							</div>
+							<div class="rounded-lg bg-slate-700/40 p-3">
+								<p class="text-xs uppercase tracking-wide text-slate-400">Passed</p>
+								<p class="mt-2 text-lg font-semibold text-green-400">{lastServiceScanSummary.passed}</p>
+							</div>
+							<div class="rounded-lg bg-slate-700/40 p-3">
+								<p class="text-xs uppercase tracking-wide text-slate-400">Failed</p>
+								<p class="mt-2 text-lg font-semibold text-red-400">{lastServiceScanSummary.failed}</p>
+							</div>
+							<div class="rounded-lg bg-slate-700/40 p-3">
+								<p class="text-xs uppercase tracking-wide text-slate-400">Skipped</p>
+								<p class="mt-2 text-lg font-semibold text-yellow-400">{lastServiceScanSummary.skipped}</p>
+							</div>
+						</div>
+						<p class="mt-3 text-xs text-slate-500">
+							Last run: {formatDate(lastServiceScanSummary.started_at)} to {formatDate(lastServiceScanSummary.completed_at)}
+						</p>
+					{:else}
+						<p class="mt-4 text-sm text-slate-400">
+							No scan has been run in this session yet. Scan counts are based on registered services, not all files in the repository.
+						</p>
+					{/if}
+				</div>
 				{#if services.length === 0}
 					<p class="text-sm text-slate-400">
 						No services are registered yet. Use the form or load demo data to populate this view.
@@ -678,16 +760,34 @@
 									<th>Port</th>
 									<th>Status</th>
 									<th>Trust</th>
+									<th>Binary</th>
+									<th>Last Scan</th>
 								</tr>
 							</thead>
 							<tbody>
 								{#each services as service}
+									{@const scanResult = getLatestScanResult(service.id)}
 									<tr>
 										<td>{service.name}</td>
 										<td class="max-w-[240px] truncate text-slate-300">{service.spiffe_id}</td>
 										<td>{service.port}</td>
 										<td><span class={getStatusBadgeClass(service.status)}>{service.status}</span></td>
 										<td>{Math.round(service.trust_score * 100)}%</td>
+										<td class="max-w-[220px] truncate text-slate-300">
+											{service.binary_path ?? 'Not configured'}
+										</td>
+										<td>
+											{#if scanResult}
+												<div class="space-y-1">
+													<span class={getScanStatusBadgeClass(scanResult.status)}>{scanResult.status}</span>
+													<p class="max-w-[260px] truncate text-xs text-slate-400">
+														{scanResult.reason ?? 'Binary measured successfully'}
+													</p>
+												</div>
+											{:else}
+												<span class="text-slate-500">Not run yet</span>
+											{/if}
+										</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -1060,7 +1160,7 @@
 					</div>
 					<div>
 						<p class="text-slate-400">Service Discovery</p>
-						<p>No interactive scanner is implemented in the current UI</p>
+						<p>Manual service attestation scan is available from the Services page</p>
 					</div>
 				</div>
 			</div>

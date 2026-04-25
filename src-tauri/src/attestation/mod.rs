@@ -178,6 +178,7 @@ struct ServiceAttestationState {
     pub process_info: Option<ProcessInfo>,
     pub resource_usage: Option<ResourceUsage>,
     pub last_measurement: DateTime<Utc>,
+    pub last_measurement_error: Option<String>,
     pub anomaly_count: u32,
 }
 
@@ -412,7 +413,7 @@ impl TrustManager {
         let score = score.max(0.0).min(1.0);
         let level = TrustLevel::from_score(score, &self.config);
         
-        let reason = self.generate_score_reason(&components, score);
+        let reason = self.generate_score_reason(state.as_deref(), &components, score);
         
         let trust_score = TrustScore {
             service_id: service_id.to_string(),
@@ -444,8 +445,13 @@ impl TrustManager {
             // Software fallback: slightly lower confidence
             components.tpm_score = 0.9;
         }
-        
+
         if let Some(state) = state {
+            // Start from a conservative integrity posture:
+            // no measurement means unverified, and a measurement without a baseline
+            // only gets partial credit until a known-good hash exists.
+            components.process_score = if state.binary_measurement.is_some() { 0.5 } else { 0.0 };
+
             // Process integrity score (E3.3)
             if state.known_good_hash.is_some() {
                 if let Some(ref measurement) = state.binary_measurement {
@@ -454,7 +460,13 @@ impl TrustManager {
                     } else {
                         components.process_score = 0.0; // Binary mismatch
                     }
+                } else {
+                    components.process_score = 0.0;
                 }
+            }
+
+            if state.last_measurement_error.is_some() {
+                components.process_score = 0.0;
             }
             
             // Behavioral score (E3.4) - based on anomaly count
@@ -471,13 +483,20 @@ impl TrustManager {
                 let mem_score = if usage.memory_percent > 90.0 { 0.5 } else { 1.0 };
                 components.resource_score = (cpu_score + mem_score) / 2.0;
             }
+        } else {
+            components.process_score = 0.0;
         }
         
         components
     }
     
     /// Generate human-readable reason for score
-    fn generate_score_reason(&self, components: &TrustScoreComponents, _score: f64) -> Option<String> {
+    fn generate_score_reason(
+        &self,
+        state: Option<&ServiceAttestationState>,
+        components: &TrustScoreComponents,
+        _score: f64,
+    ) -> Option<String> {
         let mut reasons = Vec::new();
         
         if !self.tpm_available {
@@ -486,6 +505,10 @@ impl TrustManager {
         
         if components.process_score < 1.0 {
             reasons.push("Process integrity issue detected");
+        }
+
+        if let Some(error) = state.and_then(|value| value.last_measurement_error.as_deref()) {
+            reasons.push(error);
         }
         
         if components.behavioral_score < 0.8 {
@@ -513,17 +536,30 @@ impl TrustManager {
                 process_info: None,
                 resource_usage: None,
                 last_measurement: Utc::now(),
+                last_measurement_error: None,
                 anomaly_count: 0,
             });
         
         // Re-measure binary
         if let Some(path) = binary_path {
-            state.binary_measurement = self.measure_binary(path).ok();
+            match self.measure_binary(path) {
+                Ok(measurement) => {
+                    state.binary_measurement = Some(measurement);
+                    state.last_measurement_error = None;
+                }
+                Err(error) => {
+                    state.binary_measurement = None;
+                    state.last_measurement_error = Some(error.to_string());
+                }
+            }
             
             // Check against known good
             if let Some(known) = self.known_good.get(path) {
                 state.known_good_hash = Some(known.expected_hash.clone());
             }
+        } else {
+            state.binary_measurement = None;
+            state.last_measurement_error = None;
         }
         
         // Update process info

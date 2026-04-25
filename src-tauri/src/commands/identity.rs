@@ -1,6 +1,7 @@
 //! Identity management Tauri commands
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tauri::command;
 use tracing::{info, error};
 
@@ -22,6 +23,7 @@ pub struct ServiceResponse {
     pub spiffe_id: String,
     pub name: String,
     pub description: Option<String>,
+    pub binary_path: Option<String>,
     pub port: u16,
     pub status: String,
     pub trust_score: f64,
@@ -43,18 +45,24 @@ pub async fn register_service(request: RegisterServiceRequest) -> Result<Service
             binary_path,
         )
         .map_err(|e| e.to_string())?;
+
+    let binary_path_for_db = service
+        .binary_path
+        .as_ref()
+        .map(pathbuf_to_string);
     
     // Store in database
     state.db.execute(
-        "INSERT INTO services (id, spiffe_id, name, description, port, binary_path, status, trust_score)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO services (id, spiffe_id, name, description, port, binary_path, binary_hash, status, trust_score)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         &[
             &service.id,
             &service.spiffe_id.to_uri(),
             &service.name,
             &service.description,
             &(service.port as i32),
-            &request.binary_path,
+            &binary_path_for_db,
+            &service.binary_hash,
             &service.status.to_string(),
             &service.trust_score,
         ],
@@ -74,10 +82,15 @@ pub async fn register_service(request: RegisterServiceRequest) -> Result<Service
         spiffe_id: service.spiffe_id.to_uri(),
         name: service.name,
         description: service.description,
+        binary_path: binary_path_for_db,
         port: service.port,
         status: service.status.to_string(),
         trust_score: service.trust_score,
     })
+}
+
+fn pathbuf_to_string(path: &PathBuf) -> String {
+    path.to_string_lossy().to_string()
 }
 
 /// Deregister a service (A2.6)
@@ -107,7 +120,7 @@ pub async fn list_services() -> Result<Vec<ServiceResponse>, String> {
     let state = get_app_state().ok_or("Application not initialized")?;
     
     let services: Vec<ServiceResponse> = state.db.query_map(
-        "SELECT id, spiffe_id, name, description, port, status, trust_score 
+        "SELECT id, spiffe_id, name, description, binary_path, port, status, trust_score 
          FROM services WHERE status != 'inactive' ORDER BY name",
         &[],
         |row| {
@@ -116,9 +129,10 @@ pub async fn list_services() -> Result<Vec<ServiceResponse>, String> {
                 spiffe_id: row.get(1)?,
                 name: row.get(2)?,
                 description: row.get(3)?,
-                port: row.get::<_, i32>(4)? as u16,
-                status: row.get(5)?,
-                trust_score: row.get(6)?,
+                binary_path: row.get(4)?,
+                port: row.get::<_, i32>(5)? as u16,
+                status: row.get(6)?,
+                trust_score: row.get(7)?,
             })
         },
     ).map_err(|e| e.to_string())?;
@@ -132,7 +146,7 @@ pub async fn get_service(service_id: String) -> Result<ServiceResponse, String> 
     let state = get_app_state().ok_or("Application not initialized")?;
     
     let services: Vec<ServiceResponse> = state.db.query_map(
-        "SELECT id, spiffe_id, name, description, port, status, trust_score 
+        "SELECT id, spiffe_id, name, description, binary_path, port, status, trust_score 
          FROM services WHERE id = ?1",
         &[&service_id],
         |row| {
@@ -141,9 +155,10 @@ pub async fn get_service(service_id: String) -> Result<ServiceResponse, String> 
                 spiffe_id: row.get(1)?,
                 name: row.get(2)?,
                 description: row.get(3)?,
-                port: row.get::<_, i32>(4)? as u16,
-                status: row.get(5)?,
-                trust_score: row.get(6)?,
+                binary_path: row.get(4)?,
+                port: row.get::<_, i32>(5)? as u16,
+                status: row.get(6)?,
+                trust_score: row.get(7)?,
             })
         },
     ).map_err(|e| e.to_string())?;
