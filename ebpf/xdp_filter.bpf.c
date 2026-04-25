@@ -27,6 +27,16 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#ifndef IPPROTO_ICMP
+#define IPPROTO_ICMP 1
+#endif
+#ifndef IPPROTO_TCP
+#define IPPROTO_TCP 6
+#endif
+#ifndef IPPROTO_UDP
+#define IPPROTO_UDP 17
+#endif
+
 #define MAX_ENTRIES 65536
 #define RATE_LIMIT_WINDOW_NS 1000000000ULL  // 1 second in nanoseconds
 

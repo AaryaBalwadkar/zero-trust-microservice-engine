@@ -113,6 +113,9 @@
 	let actionMessage = '';
 	let errorMessage = '';
 
+	// Auto-refresh interval
+	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
 	// Per-service expand state
 	let expandedServiceId: string | null = null;
 
@@ -185,11 +188,28 @@
 				await runServiceScans(true);
 			}
 		} catch { /* silent */ }
+
+		return () => {
+			if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+		};
 	});
 
 	$: activeSection = $currentSection;
 	$: if (hasMounted) {
 		void refreshSection(activeSection);
+		
+		// Manage auto-refresh for Attacks section
+		if (autoRefreshTimer) {
+			clearInterval(autoRefreshTimer);
+			autoRefreshTimer = null;
+		}
+		if (activeSection === 'attacks') {
+			autoRefreshTimer = setInterval(() => {
+				if (!isLoading && !isBlacklistingIp && isAcknowledgingAlertId === null) {
+					void loadAttacksSection();
+				}
+			}, 3000);
+		}
 	}
 
 	async function refreshSection(section: NavigationSection = activeSection) {

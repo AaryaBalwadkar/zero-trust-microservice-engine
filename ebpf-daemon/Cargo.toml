@@ -1,0 +1,18 @@
+[package]
+name = "ebpf-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libbpf-rs = "0.23"
+rusqlite = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+ctrlc = "3.4"
+libc = "0.2"
+libbpf-sys = "1.4"
+
+[build-dependencies]
+libbpf-cargo = "0.23"
