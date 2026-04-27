@@ -113,7 +113,7 @@ pub struct EbpfConfig {
     /// SYN flood threshold per IP (D2.1: 100 SYNs/sec)
     #[validate(range(min = 10, max = 10000))]
     pub syn_flood_threshold: u32,
-    /// Port scan threshold (D2.2: 50 ports in 10 seconds)
+    /// Port scan threshold (D2.2: 200 distinct ports in 10 seconds)
     #[validate(range(min = 10, max = 1000))]
     pub port_scan_threshold: u32,
     /// HTTP flood threshold (D2.3: 1000 req/sec)
@@ -238,7 +238,7 @@ impl Default for Config {
                 enabled: true,
                 interface: "eth0".to_string(),
                 syn_flood_threshold: 100,
-                port_scan_threshold: 50,
+                port_scan_threshold: 200,
                 http_flood_threshold: 1000,
                 icmp_flood_threshold: 500,
                 drop_log_sample_rate: 0.1,
