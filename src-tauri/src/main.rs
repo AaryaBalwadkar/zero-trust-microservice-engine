@@ -94,6 +94,7 @@ fn main() {
 
             // Development helpers
             commands::dev::seed_demo_data,
+            commands::dev::reset_database,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ZeroTrust Mesh");

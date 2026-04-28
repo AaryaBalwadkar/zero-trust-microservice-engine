@@ -110,6 +110,7 @@
 	let isRegisteringService = false;
 	let isCreatingTunnel = false;
 	let isScanningServices = false;
+	let isResetting = false;
 	let actionMessage = '';
 	let errorMessage = '';
 
@@ -135,6 +136,7 @@
 
 	// Alert acknowledge
 	let isAcknowledgingAlertId: number | null = null;
+	let isDeregisteringServiceId: string | null = null;
 
 	// Audit filter
 	let auditFilter = '';
@@ -346,7 +348,7 @@
 
 		try {
 			const result = await dev.seedDemoData();
-			actionMessage = `Loaded demo data: ${result.services} services, ${result.policies} policies, ${result.attacks} attacks, ${result.alerts} alerts.`;
+			actionMessage = `Demo workspace loaded: ${result.services} services, ${result.policies} policies, ${result.attacks} attacks. Existing data was cleared.`;
 			await refreshSection(activeSection);
 		} catch (error) {
 			console.error(error);
@@ -356,14 +358,35 @@
 		}
 	}
 
+	async function doResetDatabase() {
+		if (!confirm('DANGER: This will permanently delete ALL data (services, policies, tunnels, logs). Are you sure?')) return;
+		
+		isResetting = true;
+		errorMessage = '';
+		try {
+			await dev.resetDatabase();
+			actionMessage = 'Database has been reset to factory state.';
+			await refreshSection(activeSection);
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to reset database';
+		} finally {
+			isResetting = false;
+		}
+	}
+
 	async function registerService() {
 		if (!serviceForm.name.trim()) {
-			errorMessage = 'Service name is required.';
+			errorMessage = 'Please provide a valid service name.';
+			return;
+		}
+		if (!serviceForm.port || serviceForm.port < 1 || serviceForm.port > 65535) {
+			errorMessage = 'Please provide a valid port number (1-65535).';
 			return;
 		}
 
 		isRegisteringService = true;
 		errorMessage = '';
+		actionMessage = '';
 
 		try {
 			await identity.registerService({
@@ -372,14 +395,31 @@
 				description: serviceForm.description.trim() || undefined,
 				binary_path: serviceForm.binary_path.trim() || undefined
 			});
-			actionMessage = `Registered service "${serviceForm.name.trim()}".`;
+			actionMessage = `Successfully registered service "${serviceForm.name.trim()}".`;
 			serviceForm = { name: '', port: 8080, description: '', binary_path: '' };
 			await loadServicesSection();
 		} catch (error) {
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to register service';
+			errorMessage = error instanceof Error ? error.message : 'Failed to register service. Check if the port is already in use.';
 		} finally {
 			isRegisteringService = false;
+		}
+	}
+
+	async function doDeregisterService(serviceId: string, name: string) {
+		if (!confirm(`Are you sure you want to deregister "${name}"? This will deactivate the service identity.`)) return;
+		
+		isDeregisteringServiceId = serviceId;
+		errorMessage = '';
+		try {
+			await identity.deregisterService(serviceId);
+			actionMessage = `Service "${name}" has been deregistered.`;
+			await loadServicesSection();
+			if (activeSection === 'dashboard') await loadDashboardSection();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Failed to deregister service';
+		} finally {
+			isDeregisteringServiceId = null;
 		}
 	}
 
@@ -944,78 +984,102 @@
 						<table class="table">
 							<thead>
 								<tr>
-									<th>Name</th>
-									<th>SPIFFE ID</th>
+									<th>Service Identity</th>
 									<th>Port</th>
 									<th>Status</th>
-									<th>Trust</th>
-									<th>Binary</th>
-									<th>Last Scan</th>
+									<th>Trust Score</th>
+									<th>Binary Attestation</th>
+									<th>Actions</th>
 								</tr>
 							</thead>
 							<tbody>
 								{#each services as service}
 									{@const scanResult = getLatestScanResult(service.id)}
 									{@const isExpanded = expandedServiceId === service.id}
-									<tr class="cursor-pointer" on:click={() => expandedServiceId = isExpanded ? null : service.id}>
-										<td class="font-medium">
+									<tr class="group hover:bg-slate-700/20 transition-colors">
+										<td class="font-medium cursor-pointer" on:click={() => expandedServiceId = isExpanded ? null : service.id}>
 											<div class="flex items-center gap-2">
 												{#if isExpanded}<ChevronDown class="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />{:else}<ChevronRight class="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />{/if}
-												{service.name}
+												<div>
+													<p class="text-slate-100">{service.name}</p>
+													<p class="text-[10px] text-slate-500 font-mono truncate max-w-[150px]">{service.spiffe_id}</p>
+												</div>
 											</div>
 										</td>
-										<td class="max-w-[200px] truncate text-slate-300 font-mono text-xs">{service.spiffe_id}</td>
-										<td>{service.port}</td>
+										<td>
+											<span class="font-mono text-cyan-400">{service.port}</span>
+										</td>
 										<td><span class={getStatusBadgeClass(service.status)}>{service.status}</span></td>
 										<td>
 											<div class="flex items-center gap-2">
-												<div class="h-1.5 w-16 rounded-full bg-slate-700 overflow-hidden">
+												<div class="h-1.5 w-12 rounded-full bg-slate-700 overflow-hidden">
 													<div class="h-full rounded-full {getTrustColor(service.trust_score)}" style="width:{service.trust_score*100}%"></div>
 												</div>
-												<span>{Math.round(service.trust_score * 100)}%</span>
+												<span class="text-xs font-medium">{Math.round(service.trust_score * 100)}%</span>
 											</div>
 										</td>
-										<td class="max-w-[180px] truncate text-slate-300 font-mono text-xs">{service.binary_path ?? '—'}</td>
 										<td>
-											{#if scanResult}
-												<span class={getScanStatusBadgeClass(scanResult.status)}>{scanResult.status}</span>
-											{:else}
-												<span class="text-slate-500 text-xs">Not run yet</span>
-											{/if}
+											<div class="flex flex-col">
+												<span class="text-[10px] text-slate-400 truncate max-w-[120px] font-mono">{service.binary_path ?? 'No binary'}</span>
+												{#if scanResult}
+													<span class={getScanStatusBadgeClass(scanResult.status)} style="font-size: 9px; padding: 0px 4px;">{scanResult.status}</span>
+												{:else}
+													<span class="text-slate-600 text-[9px]">Pending scan</span>
+												{/if}
+											</div>
+										</td>
+										<td>
+											<button 
+												class="btn btn-secondary py-1 px-2 text-[10px] text-red-400 border-red-500/30 hover:bg-red-500/10 flex items-center gap-1"
+												on:click|stopPropagation={() => doDeregisterService(service.id, service.name)}
+												disabled={isDeregisteringServiceId === service.id}
+											>
+												<Ban class="h-3 w-3" />
+												{isDeregisteringServiceId === service.id ? '...' : 'Deregister'}
+											</button>
 										</td>
 									</tr>
 									{#if isExpanded}
 										<tr class="bg-slate-900/60">
-											<td colspan="7" class="px-4 py-4">
-												<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+											<td colspan="6" class="px-4 py-4">
+												<div class="grid grid-cols-1 gap-6 md:grid-cols-3">
 													<div class="space-y-2">
-														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Binary Attestation</p>
+														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Description</p>
+														<p class="text-sm text-slate-300 italic">
+															{service.description || 'No description provided for this service.'}
+														</p>
+													</div>
+													<div class="space-y-2">
+														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Binary Integrity</p>
 														{#if scanResult}
-															<div class="space-y-1 font-mono text-xs">
-																<p class="text-slate-400">Measured SHA-256:</p>
-																<p class="break-all text-green-300">{scanResult.measured_sha256 ?? 'N/A'}</p>
-																<p class="text-slate-400 mt-2">Expected SHA-256:</p>
-																<p class="break-all text-slate-300">{scanResult.expected_sha256 ?? 'Not set (first scan stores baseline)'}</p>
-																<p class="text-slate-500 mt-2">Measured at: {formatDate(scanResult.measured_at)}</p>
+															<div class="space-y-1 font-mono text-[10px]">
+																<p class="text-slate-400">SHA-256 (Measured):</p>
+																<p class="break-all text-green-300/80">{scanResult.measured_sha256 ?? 'N/A'}</p>
+																<p class="text-slate-400 mt-2">SHA-256 (Expected):</p>
+																<p class="break-all text-slate-500">{scanResult.expected_sha256 ?? 'Initial Baseline'}</p>
 															</div>
 														{:else}
-															<p class="text-xs text-slate-500">Run a scan to see binary hash details.</p>
+															<p class="text-xs text-slate-500">Run an attestation scan to verify integrity.</p>
 														{/if}
 													</div>
 													<div class="space-y-2">
-														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Trust Score Detail</p>
-														{#if scanResult}
-															<div class="space-y-1.5 text-xs">
-																{#each [['Trust Level', scanResult.trust_level], ['Score', `${Math.round(scanResult.trust_score * 100)}%`], ['Reason', scanResult.reason ?? '—']] as [label, val]}
-																	<div class="flex justify-between">
-																		<span class="text-slate-400">{label}</span>
-																		<span class="text-slate-200">{val}</span>
-																	</div>
-																{/each}
+														<p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Identity Details</p>
+														<div class="space-y-1 text-xs">
+															<div class="flex justify-between">
+																<span class="text-slate-500">SPIFFE ID</span>
+																<span class="text-slate-300 font-mono">{service.spiffe_id}</span>
 															</div>
-														{:else}
-															<p class="text-xs text-slate-500">No trust score data yet.</p>
-														{/if}
+															<div class="flex justify-between">
+																<span class="text-slate-500">Port</span>
+																<span class="text-slate-300">{service.port}</span>
+															</div>
+															{#if scanResult}
+																<div class="flex justify-between">
+																	<span class="text-slate-500">Scan Reason</span>
+																	<span class="text-slate-400 text-right max-w-[150px]">{scanResult.reason ?? 'Verification passed'}</span>
+																</div>
+															{/if}
+														</div>
 													</div>
 												</div>
 											</td>
@@ -1560,16 +1624,24 @@
 			<!-- Development Tools -->
 			<div class="card xl:col-span-1 border-orange-500/30">
 				<div class="card-header">
-					<h2 class="card-title text-orange-300">Development Tools</h2>
+					<h2 class="card-title text-orange-300">Workspace Management</h2>
 					<AlertTriangle class="h-5 w-5 text-orange-400" />
 				</div>
 				<p class="mb-4 text-sm text-slate-400">
-					<strong class="text-orange-300">Warning:</strong> Loading a demo workspace clears ALL existing data — including any real services you registered.
+					Quickly populate or reset your local environment for testing.
 				</p>
-				<button class="btn btn-secondary w-full flex items-center justify-center gap-2" on:click={loadDemoData} disabled={isSeeding}>
-					{isSeeding ? 'Loading Demo Workspace...' : 'Load Demo Workspace'}
-				</button>
-				<p class="mt-2 text-xs text-slate-500">Inserts 3 services (mapped to /usr/bin/env, /bin/sh, /bin/ls), 2 policies, 1 tunnel, 3 attacks, 3 alerts. All data is real — binaries will be scanned for real SHA-256 hashes.</p>
+				<div class="space-y-3">
+					<button class="btn btn-secondary w-full flex items-center justify-center gap-2" on:click={loadDemoData} disabled={isSeeding || isResetting}>
+						{isSeeding ? 'Loading Demo Workspace...' : 'Load Demo Workspace'}
+					</button>
+					<button class="btn border-red-500/30 text-red-400 hover:bg-red-500/10 w-full flex items-center justify-center gap-2" on:click={doResetDatabase} disabled={isSeeding || isResetting}>
+						{isResetting ? 'Resetting...' : 'Factory Reset Database'}
+					</button>
+				</div>
+				<p class="mt-4 text-[10px] text-slate-500 italic">
+					Load Demo: Inserts 3 pre-configured services and sample policies.<br/>
+					Factory Reset: Deletes all records. Use this if you encounter registration conflicts.
+				</p>
 			</div>
 		</div>
 

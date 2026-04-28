@@ -313,6 +313,15 @@ pub async fn seed_demo_data() -> Result<DemoDataResponse, String> {
     })
 }
 
+/// Clear all database tables to start fresh (Factory Reset)
+#[command]
+pub async fn reset_database() -> Result<(), String> {
+    let state = get_app_state().ok_or("Application not initialized")?;
+    reset_demo_tables(&state)?;
+    info!("Database reset performed by user");
+    Ok(())
+}
+
 fn reset_demo_tables(state: &std::sync::Arc<zerotrust_mesh_lib::AppState>) -> Result<(), String> {
     let statements = [
         "DELETE FROM certificates",

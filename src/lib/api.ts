@@ -398,4 +398,5 @@ export const wireguard = {
 
 export const dev = {
 	seedDemoData: (): Promise<DemoDataResponse> => invoke('seed_demo_data'),
+	resetDatabase: (): Promise<void> => invoke('reset_database'),
 };
