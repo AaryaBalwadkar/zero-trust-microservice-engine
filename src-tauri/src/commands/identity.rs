@@ -29,12 +29,27 @@ pub struct ServiceResponse {
     pub trust_score: f64,
 }
 
-/// Register a new service (A2.2)
 #[command]
 pub async fn register_service(request: RegisterServiceRequest) -> Result<ServiceResponse, String> {
     let state = get_app_state().ok_or("Application not initialized")?;
     let provider = state.identity_provider.write();
     
+    let binary_path_str = request.binary_path.as_deref().unwrap_or("");
+    
+    // Check for duplicate port or binary path among active services
+    let duplicates: Vec<String> = state.db.query_map(
+        "SELECT name FROM services WHERE status != 'inactive' AND (port = ?1 OR binary_path = ?2)",
+        &[&(request.port as i32), &binary_path_str],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if !duplicates.is_empty() {
+        return Err(format!(
+            "Conflict detected: Service '{}' is already using port {} or binary path '{}'.",
+            duplicates[0], request.port, binary_path_str
+        ));
+    }
+
     let binary_path = request.binary_path.as_ref().map(std::path::Path::new);
     
     let (service, _cert) = provider

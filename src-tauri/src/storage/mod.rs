@@ -23,7 +23,7 @@ impl Database {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .context("Failed to create database directory")?;
+                .context(format!("Failed to create database directory at {:?}", parent))?;
         }
         
         let conn = Connection::open_with_flags(

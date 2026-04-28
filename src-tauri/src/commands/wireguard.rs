@@ -37,18 +37,28 @@ pub struct CreateTunnelRequest {
 pub async fn create_tunnel(request: CreateTunnelRequest) -> Result<TunnelResponse, String> {
     let state = get_app_state().ok_or("Application not initialized")?;
 
-    let existing_count: i64 = state
-        .db
-        .query_map("SELECT COUNT(*) FROM tunnels", &[], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .first()
-        .copied()
-        .unwrap_or(0);
+    // Check if a tunnel already exists between these services (UNIQUE constraint check)
+    let existing_tunnel: Vec<String> = state.db.query_map(
+        "SELECT id FROM tunnels WHERE (service_a_id = ?1 AND service_b_id = ?2) OR (service_a_id = ?2 AND service_b_id = ?1)",
+        &[&request.service_a_id, &request.service_b_id],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if !existing_tunnel.is_empty() {
+        return Err("A secure tunnel already exists between these two services.".to_string());
+    }
+
+    // Get the highest current index for interface naming
+    let max_idx: i64 = state.db.query_map(
+        "SELECT MAX(CAST(SUBSTR(interface_name, 3) AS INTEGER)) FROM tunnels",
+        &[],
+        |row| Ok(row.get::<_, Option<i64>>(0)?.unwrap_or(0))
+    ).map_err(|e| e.to_string())?.first().copied().unwrap_or(0);
 
     let key_pair = WgKeyPair::generate().map_err(|e| e.to_string())?;
     let tunnel_id = Uuid::new_v4().to_string();
-    let interface_name = format!("wg{}", existing_count + 1);
-    let virtual_ip = format!("10.128.0.{}", existing_count + 10);
+    let interface_name = format!("wg{}", max_idx + 1);
+    let virtual_ip = format!("10.128.0.{}", max_idx + 10);
     let now = chrono::Utc::now().to_rfc3339();
 
     state

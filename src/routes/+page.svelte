@@ -435,20 +435,25 @@
 		if (!createPolicyForm.name.trim()) { errorMessage = 'Policy name is required.'; return; }
 		isCreatingPolicy = true;
 		try {
+			// Backend expects internally tagged enum: { "type": "risk_score", "operator": "less_than", "threshold": 0.5 }
 			const condition = createPolicyForm.condition_type === 'trust_score'
-				? { RiskScore: { operator: 'LessThan', threshold: createPolicyForm.threshold } }
-				: [];
+				? { type: 'risk_score', operator: 'less_than', threshold: createPolicyForm.threshold }
+				: null;
+				
+			const conditions = condition ? [condition] : [];
+			
 			await policy.createPolicy({
 				name: createPolicyForm.name.trim(),
 				priority: Number(createPolicyForm.priority),
 				action: createPolicyForm.action,
-				conditions: Array.isArray(condition) ? condition : [condition]
+				conditions: conditions
 			});
-			actionMessage = `Policy "${createPolicyForm.name}" created.`;
+			actionMessage = `Policy "${createPolicyForm.name}" created and persisted to database.`;
 			createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', threshold: 0.5 };
 			showCreatePolicy = false;
 			await loadPoliciesSection();
 		} catch (error) {
+			console.error(error);
 			errorMessage = error instanceof Error ? error.message : 'Failed to create policy';
 		} finally {
 			isCreatingPolicy = false;
