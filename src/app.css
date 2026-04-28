@@ -76,7 +76,27 @@ body {
 /* Input styles */
 .input {
   @apply w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  color-scheme: dark;
 }
+
+/* Force dark OS-level dropdown popup for all selects */
+select, select.input {
+  @apply bg-slate-900 text-slate-100 border border-slate-600;
+  color-scheme: dark;
+}
+
+/* Option elements inside selects */
+select option {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+
+select option:hover,
+select option:checked {
+  background-color: #1e3a5f;
+  color: #f1f5f9;
+}
+
 
 /* Badge styles */
 .badge {

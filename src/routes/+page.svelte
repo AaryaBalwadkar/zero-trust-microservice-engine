@@ -27,7 +27,7 @@
 	} from '$lib/api';
 	import {
 		Activity, AlertTriangle, FileText, Lock, Network, Server, Settings,
-		ChevronDown, ChevronRight, Zap, Plus, Eye, Ban, CheckCheck, Download
+		ChevronDown, ChevronRight, Zap, Plus, Eye, Ban, CheckCheck, Download, Trash2
 	} from 'lucide-svelte';
 
 	type AttackStats = {
@@ -306,13 +306,15 @@
 	}
 
 	async function loadPoliciesSection() {
-		const [policiesResponse, dashboardResponse] = await Promise.all([
+		const [policiesResponse, dashboardResponse, servicesResponse] = await Promise.all([
 			policy.listPolicies(),
-			dashboard.getData()
+			dashboard.getData(),
+			identity.listServices()
 		]);
 
 		policies = policiesResponse;
 		dashboardData = dashboardResponse;
+		services = servicesResponse;
 	}
 
 	async function loadMeshSection() {
@@ -1192,49 +1194,65 @@
 						</form>
 					{/if}
 					{#if policies.length === 0}
-						<p class="text-sm text-slate-400">No policies stored yet. Create one above or load a demo workspace from Settings.</p>
+						<div class="flex flex-col items-center justify-center py-10 text-center">
+							<Lock class="h-10 w-10 text-slate-600 mb-3" />
+							<p class="text-sm text-slate-400">No policies stored yet.</p>
+							<p class="text-xs text-slate-500 mt-1">Click <strong class="text-slate-300">New Policy</strong> above to create one.</p>
+						</div>
 					{:else}
 						<div class="overflow-x-auto">
 							<table class="table">
 								<thead>
 									<tr>
-										<th>Priority</th>
-										<th>Name & Condition</th>
+										<th class="w-12">#</th>
+										<th>Name</th>
+										<th>Condition</th>
 										<th>Action</th>
+										<th>Status</th>
 										<th>Hits</th>
-										<th class="text-right">Actions</th>
+										<th>Last Match</th>
+										<th class="text-right">Delete</th>
 									</tr>
 								</thead>
 								<tbody>
-									{#each policies as p}
-										{@const cond = p.conditions[0]}
-										<tr class="hover:bg-slate-800/30 transition-colors">
-											<td class="text-slate-400 font-mono text-xs w-16">{p.priority}</td>
+									{#each policies.slice().sort((a, b) => a.priority - b.priority) as p}
+										{@const cond = p.conditions?.[0]}
+										<tr class="hover:bg-slate-800/40 transition-colors">
+											<td class="text-slate-400 font-mono text-xs w-12">{p.priority}</td>
 											<td>
 												<div class="font-medium text-slate-100">{p.name}</div>
-												<div class="text-[10px] text-slate-500 mt-1 uppercase tracking-wider flex items-center gap-2">
-													{#if cond?.type === 'risk_score'}
-														<div class="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
-															Score {cond.operator.replace(/_/g, ' ')} {cond.threshold}
-														</div>
-													{:else}
-														<span class="italic">Custom Condition</span>
-													{/if}
-												</div>
+												{#if p.description}<div class="text-[10px] text-slate-500 mt-0.5">{p.description}</div>{/if}
+												<div class="text-[9px] text-slate-600 font-mono mt-0.5">{p.id.slice(0,8)}…</div>
 											</td>
 											<td>
-												<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {p.action === 'Allow' ? 'bg-green-500/20 text-green-400 border border-green-500/20' : p.action === 'Deny' ? 'bg-red-500/20 text-red-400 border border-red-500/20' : 'bg-blue-500/20 text-blue-400 border border-blue-500/20'}">
+												{#if cond}
+													<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-slate-300 font-mono whitespace-nowrap">
+														score {(cond.operator ?? '').replace(/_/g, ' ')} {cond.threshold ?? cond.value ?? '?'}
+													</span>
+												{:else}
+													<span class="text-xs text-slate-600 italic">—</span>
+												{/if}
+											</td>
+											<td>
+												<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold {p.action === 'Allow' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : p.action === 'Deny' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'}">
 													{p.action}
 												</span>
 											</td>
-											<td class="text-slate-400 text-xs">{p.hit_count}</td>
+											<td>
+												<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs {p.enabled ? 'bg-emerald-900/50 text-emerald-400' : 'bg-slate-700/50 text-slate-500'}">
+													{p.enabled ? 'ON' : 'OFF'}
+												</span>
+											</td>
+											<td class="text-slate-300 font-mono text-xs">{p.hit_count ?? 0}</td>
+											<td class="text-slate-500 text-xs whitespace-nowrap">{p.last_match ? formatDate(p.last_match) : '—'}</td>
 											<td class="text-right">
-												<button 
-													class="p-2 text-slate-500 hover:text-red-400 transition-colors" 
+												<button
+													class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/25 hover:border-red-500/50 transition-all text-xs font-medium disabled:opacity-40"
 													on:click={() => doDeletePolicy(p.id, p.name)}
 													disabled={isDeletingPolicyId === p.id}
 												>
-													<Trash2 class="h-4 w-4" />
+													<Trash2 class="h-3.5 w-3.5" />
+													{isDeletingPolicyId === p.id ? '…' : 'Delete'}
 												</button>
 											</td>
 										</tr>
