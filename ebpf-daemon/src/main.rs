@@ -409,7 +409,21 @@ fn main() -> Result<()> {
     );
 
     while running.load(Ordering::SeqCst) {
-        ring_buffer.poll(Duration::from_millis(100))?;
+        match ring_buffer.poll(Duration::from_millis(100)) {
+            Ok(_) => {}
+            Err(e) => {
+                // EINTR (os error 4): the blocking poll syscall was interrupted
+                // by a signal (e.g. Ctrl+C / SIGINT). This is expected during
+                // shutdown — just check the running flag and exit the loop cleanly.
+                let msg = e.to_string();
+                if msg.contains("os error 4") || msg.contains("Interrupted") {
+                    info!("Poll interrupted by signal — shutting down cleanly.");
+                    break;
+                }
+                // Any other error is unexpected and should propagate
+                return Err(e.into());
+            }
+        }
     }
 
     // Graceful cleanup: detach XDP program
