@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod mesh;
+
 // Include the generated skeleton
 mod xdp_filter {
     include!(concat!(env!("OUT_DIR"), "/xdp_filter.skel.rs"));
@@ -374,6 +376,21 @@ fn main() -> Result<()> {
         r.store(false, Ordering::SeqCst);
     })?;
 
+    // ── Spawn the live WireGuard Mesh Controller on its own thread ──────────
+    // It polls zerotrust.db every 5 s, provisions any 'connecting' tunnels as
+    // real kernel WireGuard interfaces, and syncs stats back to the DB.
+    let mesh_db_path = db_path.clone();
+    let mesh_running = running.clone();
+    let mesh_thread = std::thread::Builder::new()
+        .name("wg-mesh-ctrl".into())
+        .spawn(move || {
+            let mut ctrl = mesh::WireGuardMeshController::new(mesh_db_path, mesh_running);
+            ctrl.run();
+        })
+        .context("Failed to spawn WireGuard mesh controller thread")?;
+    info!("WireGuard Mesh Controller thread started.");
+    // ────────────────────────────────────────────────────────────────────────
+
     // Create event deduplicator — suppress duplicate logs within 5-second window
     let dedup = Arc::new(Mutex::new(EventDeduplicator::new(5)));
 
@@ -395,15 +412,20 @@ fn main() -> Result<()> {
         ring_buffer.poll(Duration::from_millis(100))?;
     }
 
-    // Graceful cleanup: detach XDP program so it doesn't keep blocking after daemon exits
+    // Graceful cleanup: detach XDP program
     info!("Detaching XDP program from {}...", iface);
     let detach_err = unsafe {
-        libbpf_sys::bpf_xdp_detach(ifindex as i32, 2, std::ptr::null()) // 2 = XDP_FLAGS_SKB_MODE
+        libbpf_sys::bpf_xdp_detach(ifindex as i32, 2, std::ptr::null())
     };
     if detach_err < 0 {
         error!("Failed to detach XDP program: error {}", detach_err);
     } else {
         info!("XDP program detached successfully. Network is back to normal.");
+    }
+
+    // Wait for the mesh controller to finish its teardown
+    if let Err(e) = mesh_thread.join() {
+        error!("Mesh controller thread panicked: {:?}", e);
     }
 
     info!("Exiting...");
