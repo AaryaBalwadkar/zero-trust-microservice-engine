@@ -126,7 +126,7 @@
 	let isEvaluatingPolicy = false;
 
 	// Policy create
-	let createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', threshold: 0.5 };
+	let createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', operator: 'greater_than', threshold: 0.8 };
 	let isCreatingPolicy = false;
 	let showCreatePolicy = false;
 
@@ -477,7 +477,7 @@
 		try {
 			// Backend expects internally tagged enum: { "type": "risk_score", "operator": "less_than", "threshold": 0.5 }
 			const condition = createPolicyForm.condition_type === 'trust_score'
-				? { type: 'risk_score', operator: 'less_than', threshold: createPolicyForm.threshold }
+				? { type: 'risk_score', operator: createPolicyForm.operator, threshold: createPolicyForm.threshold }
 				: null;
 				
 			const conditions = condition ? [condition] : [];
@@ -489,7 +489,7 @@
 				conditions: conditions
 			});
 			actionMessage = `Policy "${createPolicyForm.name}" created and persisted to database.`;
-			createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', threshold: 0.5 };
+			createPolicyForm = { name: '', priority: 10, action: 'Allow', condition_type: 'trust_score', operator: 'greater_than', threshold: 0.8 };
 			showCreatePolicy = false;
 			await loadPoliciesSection();
 		} catch (error) {
@@ -1133,11 +1133,23 @@
 									</select>
 								</div>
 								<div>
-									<label class="mb-1 block text-xs text-slate-400" for="cp-threshold">Trust Threshold</label>
-									<input id="cp-threshold" class="input" type="number" step="0.05" min="0" max="1" bind:value={createPolicyForm.threshold} />
+									<label class="mb-1 block text-xs text-slate-400" for="cp-operator">Operator</label>
+									<select id="cp-operator" class="input" bind:value={createPolicyForm.operator}>
+										<option value="greater_than">Greater Than (&gt;)</option>
+										<option value="less_than">Less Than (&lt;)</option>
+										<option value="greater_than_or_equal">Greater or Equal (&ge;)</option>
+										<option value="less_than_or_equal">Less or Equal (&le;)</option>
+									</select>
 								</div>
 							</div>
-							<p class="text-xs text-slate-500">Condition: trust score &lt; threshold → apply action</p>
+							<div>
+								<label class="mb-1 block text-xs text-slate-400" for="cp-threshold">Trust Threshold</label>
+								<input id="cp-threshold" class="input" type="number" step="0.05" min="0" max="1" bind:value={createPolicyForm.threshold} />
+							</div>
+							<p class="text-xs text-slate-500">
+								Logic: If [trust score] {createPolicyForm.operator.replace(/_/g, ' ')} {createPolicyForm.threshold} 
+								&rarr; {createPolicyForm.action}
+							</p>
 							<button class="btn btn-primary w-full" disabled={isCreatingPolicy}>
 								{isCreatingPolicy ? 'Creating...' : 'Create Policy'}
 							</button>
