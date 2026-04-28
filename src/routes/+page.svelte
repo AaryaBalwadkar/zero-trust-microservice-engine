@@ -137,6 +137,28 @@
 	// Alert acknowledge
 	let isAcknowledgingAlertId: number | null = null;
 	let isDeregisteringServiceId: string | null = null;
+	let isDeletingPolicyId: string | null = null;
+
+	// Evaluator dropdown state
+	let evalSourceId = '';
+	let evalDestId = '';
+
+	$: {
+		if (evalSourceId) {
+			const svc = services.find(s => s.id === evalSourceId);
+			if (svc) {
+				policyEvalForm.source_spiffe_id = svc.spiffe_id;
+				policyEvalForm.trust_score = svc.trust_score;
+			}
+		}
+		if (evalDestId) {
+			const svc = services.find(s => s.id === evalDestId);
+			if (svc) {
+				policyEvalForm.dest_spiffe_id = svc.spiffe_id;
+				policyEvalForm.dest_port = svc.port;
+			}
+		}
+	}
 
 	// Audit filter
 	let auditFilter = '';
@@ -497,6 +519,20 @@
 			errorMessage = extractError(error, 'Failed to create policy');
 		} finally {
 			isCreatingPolicy = false;
+		}
+	}
+
+	async function doDeletePolicy(policyId: string, name: string) {
+		if (!confirm(`Are you sure you want to delete policy "${name}"?`)) return;
+		isDeletingPolicyId = policyId;
+		try {
+			await policy.deletePolicy(policyId);
+			actionMessage = `Policy "${name}" deleted.`;
+			await loadPoliciesSection();
+		} catch (error) {
+			errorMessage = extractError(error, 'Failed to delete policy');
+		} finally {
+			isDeletingPolicyId = null;
 		}
 	}
 
@@ -1160,18 +1196,47 @@
 					{:else}
 						<div class="overflow-x-auto">
 							<table class="table">
-								<thead><tr><th>Name</th><th>Action</th><th>Priority</th><th>Enabled</th><th>Hits</th></tr></thead>
+								<thead>
+									<tr>
+										<th>Priority</th>
+										<th>Name & Condition</th>
+										<th>Action</th>
+										<th>Hits</th>
+										<th class="text-right">Actions</th>
+									</tr>
+								</thead>
 								<tbody>
 									{#each policies as p}
-										<tr>
+										{@const cond = p.conditions[0]}
+										<tr class="hover:bg-slate-800/30 transition-colors">
+											<td class="text-slate-400 font-mono text-xs w-16">{p.priority}</td>
 											<td>
 												<div class="font-medium text-slate-100">{p.name}</div>
-												{#if p.description}<div class="text-xs text-slate-400">{p.description}</div>{/if}
+												<div class="text-[10px] text-slate-500 mt-1 uppercase tracking-wider flex items-center gap-2">
+													{#if cond?.type === 'risk_score'}
+														<div class="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700">
+															Score {cond.operator.replace(/_/g, ' ')} {cond.threshold}
+														</div>
+													{:else}
+														<span class="italic">Custom Condition</span>
+													{/if}
+												</div>
 											</td>
-											<td><span class={p.action === 'Allow' ? 'badge badge-success' : p.action === 'Deny' ? 'badge badge-danger' : 'badge badge-info'}>{p.action}</span></td>
-											<td>{p.priority}</td>
-											<td>{p.enabled ? 'Yes' : 'No'}</td>
-											<td>{p.hit_count}</td>
+											<td>
+												<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {p.action === 'Allow' ? 'bg-green-500/20 text-green-400 border border-green-500/20' : p.action === 'Deny' ? 'bg-red-500/20 text-red-400 border border-red-500/20' : 'bg-blue-500/20 text-blue-400 border border-blue-500/20'}">
+													{p.action}
+												</span>
+											</td>
+											<td class="text-slate-400 text-xs">{p.hit_count}</td>
+											<td class="text-right">
+												<button 
+													class="p-2 text-slate-500 hover:text-red-400 transition-colors" 
+													on:click={() => doDeletePolicy(p.id, p.name)}
+													disabled={isDeletingPolicyId === p.id}
+												>
+													<Trash2 class="h-4 w-4" />
+												</button>
+											</td>
 										</tr>
 									{/each}
 								</tbody>
@@ -1188,30 +1253,52 @@
 					<Eye class="h-5 w-5 text-slate-400" />
 				</div>
 				<p class="mb-4 text-sm text-slate-400">Test a request against all active policies. Results come from the real policy engine.</p>
-				<form class="space-y-3" on:submit|preventDefault={doEvaluatePolicy}>
-					<div class="grid grid-cols-2 gap-3">
+				<form class="space-y-4" on:submit|preventDefault={doEvaluatePolicy}>
+					<div class="grid grid-cols-2 gap-4">
 						<div>
-							<label class="mb-1 block text-xs text-slate-400" for="eval-src">Source SPIFFE ID</label>
-							<input id="eval-src" class="input" bind:value={policyEvalForm.source_spiffe_id} placeholder="spiffe://domain/svc-a" />
+							<label class="mb-1 block text-[10px] uppercase font-bold text-slate-500" for="eval-src-svc">Source Service</label>
+							<select id="eval-src-svc" class="input w-full bg-slate-800 border-slate-700" bind:value={evalSourceId}>
+								<option value="">Manual Entry</option>
+								{#each services as s}
+									<option value={s.id}>{s.name} ({s.trust_score * 100}%)</option>
+								{/each}
+							</select>
 						</div>
 						<div>
-							<label class="mb-1 block text-xs text-slate-400" for="eval-dst">Dest SPIFFE ID</label>
-							<input id="eval-dst" class="input" bind:value={policyEvalForm.dest_spiffe_id} placeholder="spiffe://domain/svc-b" />
+							<label class="mb-1 block text-[10px] uppercase font-bold text-slate-500" for="eval-dst-svc">Dest Service</label>
+							<select id="eval-dst-svc" class="input w-full bg-slate-800 border-slate-700" bind:value={evalDestId}>
+								<option value="">Manual Entry</option>
+								{#each services as s}
+									<option value={s.id}>{s.name} (Port {s.port})</option>
+								{/each}
+							</select>
 						</div>
 					</div>
-					<div class="grid grid-cols-2 gap-3">
-						<div>
-							<label class="mb-1 block text-xs text-slate-400" for="eval-ip">Source IP</label>
-							<input id="eval-ip" class="input" bind:value={policyEvalForm.source_ip} placeholder="10.0.0.1" />
+
+					<div class="space-y-3 p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+						<div class="grid grid-cols-1 gap-2">
+							<div class="flex flex-col">
+								<span class="text-[9px] text-slate-500 uppercase">Source SPIFFE ID</span>
+								<input class="bg-transparent border-none p-0 text-xs text-slate-300 focus:ring-0" bind:value={policyEvalForm.source_spiffe_id} />
+							</div>
+							<div class="flex flex-col">
+								<span class="text-[9px] text-slate-500 uppercase">Destination SPIFFE ID</span>
+								<input class="bg-transparent border-none p-0 text-xs text-slate-300 focus:ring-0" bind:value={policyEvalForm.dest_spiffe_id} />
+							</div>
 						</div>
-						<div>
-							<label class="mb-1 block text-xs text-slate-400" for="eval-port">Dest Port</label>
-							<input id="eval-port" class="input" type="number" bind:value={policyEvalForm.dest_port} placeholder="443" />
+						<div class="grid grid-cols-2 gap-4 border-t border-slate-700/50 pt-2">
+							<div class="flex flex-col">
+								<span class="text-[9px] text-slate-500 uppercase">Simulated Score</span>
+								<div class="flex items-center gap-2">
+									<input type="range" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer" min="0" max="1" step="0.01" bind:value={policyEvalForm.trust_score} />
+									<span class="text-xs font-mono text-slate-400">{(policyEvalForm.trust_score * 100).toFixed(0)}%</span>
+								</div>
+							</div>
+							<div class="flex flex-col">
+								<span class="text-[9px] text-slate-500 uppercase">Dest Port</span>
+								<input type="number" class="bg-transparent border-none p-0 text-xs text-slate-300 focus:ring-0" bind:value={policyEvalForm.dest_port} />
+							</div>
 						</div>
-					</div>
-					<div>
-						<label class="mb-1 block text-xs text-slate-400" for="eval-trust">Trust Score: {policyEvalForm.trust_score.toFixed(2)}</label>
-						<input id="eval-trust" class="w-full" type="range" min="0" max="1" step="0.05" bind:value={policyEvalForm.trust_score} />
 					</div>
 					<button class="btn btn-primary w-full flex items-center justify-center gap-2" disabled={isEvaluatingPolicy}>
 						<Zap class="h-4 w-4" />
