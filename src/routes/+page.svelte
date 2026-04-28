@@ -244,7 +244,7 @@
 			}
 		} catch (error) {
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to load section data';
+			errorMessage = extractError(error, 'Failed to load section data');
 		} finally {
 			isLoading = false;
 		}
@@ -352,7 +352,7 @@
 			await refreshSection(activeSection);
 		} catch (error) {
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to load demo data';
+			errorMessage = extractError(error, 'Failed to load demo data');
 		} finally {
 			isSeeding = false;
 		}
@@ -368,7 +368,7 @@
 			actionMessage = 'Database has been reset to factory state.';
 			await refreshSection(activeSection);
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to reset database';
+			errorMessage = extractError(error, 'Failed to reset database');
 		} finally {
 			isResetting = false;
 		}
@@ -398,9 +398,9 @@
 			actionMessage = `Successfully registered service "${serviceForm.name.trim()}".`;
 			serviceForm = { name: '', port: 8080, description: '', binary_path: '' };
 			await loadServicesSection();
-		} catch (error) {
-			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to register service. Check if the port is already in use.';
+		} catch (error: any) {
+			console.error('Registration failed:', error);
+			errorMessage = extractError(error, 'Failed to register service. Check the logs for details.');
 		} finally {
 			isRegisteringService = false;
 		}
@@ -417,7 +417,7 @@
 			await loadServicesSection();
 			if (activeSection === 'dashboard') await loadDashboardSection();
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to deregister service';
+			errorMessage = extractError(error, 'Failed to deregister service');
 		} finally {
 			isDeregisteringServiceId = null;
 		}
@@ -447,7 +447,7 @@
 		} catch (error) {
 			scanStore.update(s => ({ ...s, isScanning: false }));
 			console.error(error);
-			if (!silent) errorMessage = error instanceof Error ? error.message : 'Failed to run service scans';
+			if (!silent) errorMessage = extractError(error, 'Failed to run service scans');
 		} finally {
 			isScanningServices = false;
 		}
@@ -465,7 +465,7 @@
 				trust_score: policyEvalForm.trust_score
 			});
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Policy evaluation failed';
+			errorMessage = extractError(error, 'Policy evaluation failed');
 		} finally {
 			isEvaluatingPolicy = false;
 		}
@@ -494,7 +494,7 @@
 			await loadPoliciesSection();
 		} catch (error) {
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to create policy';
+			errorMessage = extractError(error, 'Failed to create policy');
 		} finally {
 			isCreatingPolicy = false;
 		}
@@ -513,7 +513,7 @@
 			blacklistForm = { ip: '', reason: '', duration_hours: '' };
 			await loadAttacksSection();
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to blacklist IP';
+			errorMessage = extractError(error, 'Failed to blacklist IP');
 		} finally {
 			isBlacklistingIp = false;
 		}
@@ -526,7 +526,7 @@
 			await loadAttacksSection();
 			if (activeSection === 'dashboard') await loadDashboardSection();
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to acknowledge alert';
+			errorMessage = extractError(error, 'Failed to acknowledge alert');
 		} finally {
 			isAcknowledgingAlertId = null;
 		}
@@ -538,7 +538,7 @@
 			const path = await audit.exportLogs();
 			actionMessage = `Audit logs exported to: ${path}`;
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Export failed';
+			errorMessage = extractError(error, 'Export failed');
 		} finally {
 			isExportingLogs = false;
 		}
@@ -574,7 +574,7 @@
 			await loadMeshSection();
 		} catch (error) {
 			console.error(error);
-			errorMessage = error instanceof Error ? error.message : 'Failed to create tunnel';
+			errorMessage = extractError(error, 'Failed to create tunnel');
 		} finally {
 			isCreatingTunnel = false;
 		}
@@ -585,6 +585,13 @@
 		if (score >= 0.5) return 'bg-yellow-500';
 		if (score >= 0.3) return 'bg-orange-500';
 		return 'bg-red-500';
+	}
+
+	/** Extract error message from Tauri invoke errors (which are plain strings, not Error objects) */
+	function extractError(error: unknown, fallback: string): string {
+		if (typeof error === 'string') return error;
+		if (error instanceof Error) return error.message;
+		return fallback;
 	}
 
 	function getSeverityClass(severity: string): string {

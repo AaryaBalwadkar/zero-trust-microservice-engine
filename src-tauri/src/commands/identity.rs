@@ -32,24 +32,43 @@ pub struct ServiceResponse {
 #[command]
 pub async fn register_service(request: RegisterServiceRequest) -> Result<ServiceResponse, String> {
     let state = get_app_state().ok_or("Application not initialized")?;
-    let provider = state.identity_provider.write();
     
-    let binary_path_str = request.binary_path.as_deref().unwrap_or("");
+    // --- Duplicate check BEFORE acquiring the identity_provider lock ---
+    // Only check port conflicts. Only check binary_path when one is actually provided.
+    let has_binary_path = request.binary_path.as_ref().map_or(false, |p| !p.trim().is_empty());
     
-    // Check for duplicate port or binary path among active services
-    let duplicates: Vec<String> = state.db.query_map(
-        "SELECT name FROM services WHERE status != 'inactive' AND (port = ?1 OR binary_path = ?2)",
-        &[&(request.port as i32), &binary_path_str],
-        |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    let duplicates: Vec<String> = if has_binary_path {
+        let bp = request.binary_path.as_deref().unwrap();
+        state.db.query_map(
+            "SELECT name FROM services WHERE status != 'inactive' AND (port = ?1 OR (binary_path IS NOT NULL AND binary_path != '' AND binary_path = ?2))",
+            &[&(request.port as i32), &bp],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?
+    } else {
+        state.db.query_map(
+            "SELECT name FROM services WHERE status != 'inactive' AND port = ?1",
+            &[&(request.port as i32)],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?
+    };
 
     if !duplicates.is_empty() {
-        return Err(format!(
-            "Conflict detected: Service '{}' is already using port {} or binary path '{}'.",
-            duplicates[0], request.port, binary_path_str
-        ));
+        let detail = if has_binary_path {
+            format!(
+                "Conflict: Service '{}' already uses port {} or binary path '{}'.",
+                duplicates[0], request.port, request.binary_path.as_deref().unwrap_or("")
+            )
+        } else {
+            format!(
+                "Conflict: Service '{}' already uses port {}.",
+                duplicates[0], request.port
+            )
+        };
+        return Err(detail);
     }
 
+    // Now acquire the provider lock for certificate generation
+    let provider = state.identity_provider.write();
     let binary_path = request.binary_path.as_ref().map(std::path::Path::new);
     
     let (service, _cert) = provider
