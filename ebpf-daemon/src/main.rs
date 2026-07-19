@@ -322,8 +322,8 @@ fn main() -> Result<()> {
     }
 
     // Open DB
-    // Assuming the daemon is run from the workspace root where `zerotrust_mesh.db` is located (or standard app data path).
-    // Let's use the current directory for simplicity in the demo, or an absolute path.
+    // When run via systemd, WorkingDirectory is set but we use the absolute path.
+    // When run manually from workspace root, cwd-relative path also works.
     let cwd = std::env::current_dir()?;
     let mut db_path = if cwd.ends_with("ebpf-daemon") {
         cwd.parent().unwrap().to_path_buf()
@@ -333,11 +333,44 @@ fn main() -> Result<()> {
     db_path.push(".dev-data");
     db_path.push("zerotrust-mesh");
     db_path.push("data");
+
+    // Create directory hierarchy if it doesn't exist yet
+    // (daemon may start before the Tauri app has initialised the DB)
+    fs::create_dir_all(&db_path)
+        .with_context(|| format!("Failed to create DB directory: {}", db_path.display()))?;
+
     db_path.push("zerotrust.db");
-    
+
     info!("Connecting to SQLite database at {}", db_path.display());
     let db_conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open DB at {}", db_path.display()))?;
+
+    // Ensure the schema exists (daemon may be the first process to open a fresh DB)
+    db_conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS tunnels (
+            id TEXT PRIMARY KEY,
+            service_a_id TEXT NOT NULL,
+            service_b_id TEXT NOT NULL,
+            interface_name TEXT NOT NULL DEFAULT '',
+            public_key TEXT NOT NULL DEFAULT '',
+            virtual_ip TEXT NOT NULL DEFAULT '',
+            peer_endpoint TEXT,
+            status TEXT NOT NULL DEFAULT 'connecting',
+            bytes_sent INTEGER NOT NULL DEFAULT 0,
+            bytes_received INTEGER NOT NULL DEFAULT 0,
+            last_handshake TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            subject TEXT,
+            details TEXT,
+            success INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    ").with_context(|| "Failed to ensure DB schema".to_string())?;
 
     // Load BPF
     let skel_builder = xdp_filter::XdpFilterSkelBuilder::default();

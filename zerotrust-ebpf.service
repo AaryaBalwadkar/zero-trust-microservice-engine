@@ -1,0 +1,26 @@
+[Unit]
+Description=ZeroTrust eBPF Security Daemon + WireGuard Mesh Controller
+After=network.target
+Documentation=https://github.com/AaryaBalwadkar/zero-trust-microservice-engine
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/aarya/zero-trust-microservice-engine
+
+# Create DB directory before starting (in case Tauri app hasn't run yet)
+ExecStartPre=/bin/mkdir -p /home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data
+ExecStartPre=/bin/chmod 777 /home/aarya/zero-trust-microservice-engine/.dev-data/zerotrust-mesh/data
+
+ExecStart=/home/aarya/zero-trust-microservice-engine/target/debug/ebpf-daemon enp0s3
+Restart=on-failure
+RestartSec=5s
+
+# Logging — view with: journalctl -u zerotrust-ebpf -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zerotrust-ebpf
+
+[Install]
+WantedBy=multi-user.target
+
